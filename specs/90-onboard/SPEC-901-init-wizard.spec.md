@@ -34,6 +34,7 @@ files_touched:
 
 ### 2.1 In-scope
 - 5-8 interactive questions (workspace name, primary use-case, voice style, language, provider choice, default model class, bash rules preset — **conditional: only shown when `primaryUseCase` matches `code`/`dev`/`software`/`programming` case-insensitive; otherwise silently defaults to `balanced`**)
+- **Model picker step (SPEC-903)** — runs after key step (SPEC-902): live-fetch `/v1/models` (Anthropic/OpenAI-compat/Ollama) → interactive picker (↑↓/Enter/c/s). On timeout/offline/4xx → `[MODELS] using curated list, may be stale` banner + priceTable fallback; user can always `c` (custom) or `s` (skip = keep default from model-class). Picker output overrides `defaultModel` via `updateWorkspace()`.
 - Template renderer (simple `${var}` substitution; no full templating engine)
 - Write **6 workspace markdown files** (SOUL, IDENTITY, MEMORY, TOOLS, DREAMS — all always generated; IDENTITY and DREAMS as minimal stubs even though META-005 marks them OPTIONAL) + CLAUDE.md at chosen location
 - Create empty directory `<workspaceRoot>/.dreams/` (0700) for future consolidation artifacts (SPEC-112 v0.2 / SPEC-114 v0.3 / Dreaming v0.5)
@@ -82,6 +83,7 @@ files_touched:
 | T4b | Invoke SPEC-902 promptApiKey/validateKeyFormat/store | User chats immediately after init | 20 | T4, SPEC-902 |
 | T5 | Idempotence + `--force` | Existing workspace → abort or force; tests both paths | 30 | T4 |
 | T6 | Custom endpoint/baseUrl prompts | If `provider≠anthropic`, ask endpoint (openai/groq/deepseek/ollama/custom); if `custom`, ask baseUrl (valid http/https URL). Persist to `workspace.json` as `defaultEndpoint`/`defaultBaseUrl`. CLI `--endpoint` / `--base-url` flags bypass prompt. | 25 | T1, T4 |
+| T7 | Model picker hook (SPEC-903 T7) | After key step: call `discoverModels()` → `pickModel()`. If user selects/custom → `updateWorkspace(id, {defaultModel})`. Skip keeps the class-based default. `--skip-model-picker` flag + `--no-prompt` bypass. | 15 | T4b, SPEC-903 |
 
 ## 6. Verification
 
@@ -171,3 +173,4 @@ Primary purpose: ${primaryUseCase}
 - 2026-04-15 @hiepht: vision-audit fixes (#18) — neutralize SOUL Values; bashPreset conditional; bundled examples non-dev
 - 2026-04-15 @hiepht: T4b hooks SPEC-902 key prompt/validate/store (#24)
 - 2026-04-15 @hiepht: T6 adds endpoint + baseUrl prompts for openai-compat providers (Task #31 — enables vLLM/Ollama/Azure/LiteLLM without manual workspace.json edit)
+- 2026-04-15 @hiepht: T7 adds model-picker hook to SPEC-903 (Task #45) — live /v1/models fetch + interactive picker replaces class-based default when user selects; graceful degrade to curated priceTable fallback.

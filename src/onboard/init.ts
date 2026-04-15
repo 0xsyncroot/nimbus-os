@@ -10,6 +10,7 @@ import {
   createWorkspaceDir,
   loadWorkspace,
   fileExists,
+  updateWorkspace,
 } from '../storage/workspaceStore.ts';
 import { switchWorkspace } from '../core/workspace.ts';
 import { askAll, InitAnswersSchema, type InitAnswers } from './questions.ts';
@@ -17,6 +18,8 @@ import { renderTemplates } from './templates.ts';
 import { promptApiKey } from './keyPrompt.ts';
 import { validateKeyFormat } from './keyValidators.ts';
 import { createKeyManager, type KeyManager } from '../key/manager.ts';
+import { discoverModels, type DiscoverProvider } from '../catalog/discover.ts';
+import { pickModel } from '../catalog/picker.ts';
 
 export interface InitRunOpts {
   force?: boolean;
@@ -26,6 +29,7 @@ export interface InitRunOpts {
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
   skipKeyStep?: boolean;
+  skipModelPicker?: boolean;
   keyManager?: KeyManager;
   apiKey?: string;
 }
@@ -159,8 +163,14 @@ export async function runInit(opts: InitRunOpts = {}): Promise<void> {
   await switchWorkspace(meta.id);
 
   // SPEC-902 T4b: provider key step — skipped for ollama (local, keyless).
+  let liveKey: string | undefined;
   if (!opts.skipKeyStep && answers.provider !== 'ollama') {
-    await runKeyStep(answers, meta.id, opts, write);
+    liveKey = await runKeyStep(answers, meta.id, opts, write);
+  }
+
+  // SPEC-903 T7: model discovery picker — post-key so fetchers can auth.
+  if (!opts.skipModelPicker && !opts.noPrompt) {
+    await runModelPicker(answers, meta.id, liveKey, opts, write);
   }
 
   write(`\n${'  '}workspace "${answers.workspaceName}" created at ${paths.root}\n`);
@@ -174,12 +184,12 @@ async function runKeyStep(
   wsId: string,
   opts: InitRunOpts,
   write: (s: string) => void,
-): Promise<void> {
+): Promise<string | undefined> {
   let key: string | undefined = opts.apiKey;
   if (!key && opts.noPrompt) {
     // No-prompt mode without a provided key → skip silently; user can run `nimbus key set` later.
     write(`  (no key provided; run \`nimbus key set ${answers.provider}\` later)\n`);
-    return;
+    return undefined;
   }
   if (!key) {
     try {
@@ -191,7 +201,7 @@ async function runKeyStep(
     } catch (err) {
       if (err instanceof NimbusError && err.code === ErrorCode.U_BAD_COMMAND && err.context['reason'] === 'non_interactive') {
         write(`  (non-interactive; run \`nimbus key set ${answers.provider}\` later)\n`);
-        return;
+        return undefined;
       }
       throw err;
     }
@@ -201,13 +211,95 @@ async function runKeyStep(
   } catch (err) {
     if (err instanceof NimbusError) {
       write(`  key format invalid for ${answers.provider} — skipping store (run \`nimbus key set\` later)\n`);
-      return;
+      return undefined;
     }
     throw err;
   }
   const manager = opts.keyManager ?? createKeyManager();
   await manager.set(answers.provider, key, { wsId });
   write(`  stored ${answers.provider} key\n`);
+  return key;
+}
+
+async function runModelPicker(
+  answers: InitAnswers,
+  wsId: string,
+  liveKey: string | undefined,
+  opts: InitRunOpts,
+  write: (s: string) => void,
+): Promise<void> {
+  const discoverProvider: DiscoverProvider =
+    answers.provider === 'anthropic'
+      ? 'anthropic'
+      : answers.provider === 'ollama'
+        ? 'ollama'
+        : 'openai-compat';
+
+  const baseUrl = resolveBaseUrl(answers);
+  if (!baseUrl) {
+    logger.debug({ provider: answers.provider }, 'model_picker_no_base_url');
+    return;
+  }
+
+  const apiKey = liveKey ?? opts.apiKey;
+  const discoveredAt = performance.now();
+  let result;
+  try {
+    result = await discoverModels({
+      provider: discoverProvider,
+      providerTag: answers.provider,
+      baseUrl,
+      apiKey: apiKey ?? null,
+      timeoutMs: 5_000,
+    });
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'model_picker_discover_failed',
+    );
+    return;
+  }
+  logger.debug(
+    {
+      source: result.source,
+      count: result.models.length,
+      elapsedMs: Math.round(performance.now() - discoveredAt),
+    },
+    'model_picker_discover_done',
+  );
+
+  const banner =
+    result.source === 'curated' || result.source === 'empty'
+      ? 'using curated list, may be stale'
+      : undefined;
+
+  const picked = await pickModel(result.models, {
+    prompt: 'Select default model',
+    ...(banner !== undefined ? { banner } : {}),
+    io: {
+      ...(opts.input ? { input: opts.input as NodeJS.ReadStream } : {}),
+      ...(opts.output ? { output: opts.output as NodeJS.WriteStream } : {}),
+    },
+  });
+
+  if (picked.kind === 'skipped') {
+    write(`  (kept default model: ${resolveModelName(answers.provider, answers.modelClass)})\n`);
+    return;
+  }
+  const chosenId = picked.kind === 'selected' ? picked.id : picked.id;
+  if (!chosenId) return;
+  await updateWorkspace(wsId, { defaultModel: chosenId });
+  write(`  default model: ${chosenId}\n`);
+}
+
+function resolveBaseUrl(answers: InitAnswers): string | null {
+  if (answers.provider === 'anthropic') return 'https://api.anthropic.com';
+  if (answers.baseUrl) return answers.baseUrl;
+  if (answers.provider === 'openai') return 'https://api.openai.com/v1';
+  if (answers.provider === 'groq') return 'https://api.groq.com/openai/v1';
+  if (answers.provider === 'deepseek') return 'https://api.deepseek.com/v1';
+  if (answers.provider === 'ollama') return 'http://localhost:11434/v1';
+  return null;
 }
 
 async function overwriteExisting(

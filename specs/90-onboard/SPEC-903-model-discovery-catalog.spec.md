@@ -1,7 +1,7 @@
 ---
 id: SPEC-903
 title: Model Discovery & Catalog — live fetch + cache + picker UX
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-15
@@ -13,18 +13,21 @@ blocks: []
 estimated_loc: 180
 files_touched:
   - src/catalog/types.ts
+  - src/catalog/fetchHelper.ts
   - src/catalog/store.ts
   - src/catalog/classify.ts
+  - src/catalog/discover.ts
+  - src/catalog/picker.ts
   - src/catalog/fetchers/anthropic.ts
   - src/catalog/fetchers/openaiCompat.ts
   - src/catalog/fetchers/ollama.ts
-  - src/models/manager.ts
   - src/onboard/init.ts
-  - src/cli.ts
   - tests/catalog/types.test.ts
+  - tests/catalog/classify.test.ts
   - tests/catalog/store.test.ts
   - tests/catalog/fetchers.test.ts
   - tests/catalog/picker.test.ts
+  - tests/catalog/discover.test.ts
 ---
 
 # Model Discovery & Catalog
@@ -163,3 +166,4 @@ export interface ModelCatalog {
 ## 10. Changelog
 
 - 2026-04-15 @hiepht: draft Option E; v0.1 core T1-T5+T7 (~120 LoC); T6/T8/T9 deferred v0.2
+- 2026-04-15 @hiepht: v0.1 core implemented (Task #45). Types/fetchHelper/store/classify/discover/picker + 3 fetchers. Cache at `{dataDir}/catalog/{provider}-{sha256(baseUrl).slice(0,8)}.json`, mode 0644, TTL 7d. `discoverModels()` orchestrator: live → cache (fresh) → stale cache → curated priceTable → empty. Picker integrated into SPEC-901 wizard post-key. 61 catalog tests; full suite 588 green. Security tests assert no key prefixes or `bearer ` tokens land in cache files. Empty-fetch treated as failure to avoid locking in a degraded catalog.
