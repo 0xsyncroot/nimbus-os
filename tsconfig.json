@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["bun"],
+    "paths": {
+      "@core/*": ["./src/core/*"],
+      "@ir/*": ["./src/ir/*"],
+      "@providers/*": ["./src/providers/*"],
+      "@platform/*": ["./src/platform/*"],
+      "@tools/*": ["./src/tools/*"],
+      "@permissions/*": ["./src/permissions/*"],
+      "@storage/*": ["./src/storage/*"],
+      "@observability/*": ["./src/observability/*"],
+      "@cost/*": ["./src/cost/*"],
+      "@channels/*": ["./src/channels/*"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

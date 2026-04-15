@@ -1,0 +1,44 @@
+{
+  "name": "nimbus-os",
+  "version": "0.1.0-dev",
+  "private": true,
+  "description": "AI OS cá nhân tự chủ, an toàn, có linh hồn",
+  "type": "module",
+  "bin": {
+    "nimbus": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "dev": "bun --watch run src/cli.ts",
+    "test": "bun test",
+    "test:e2e": "bun test tests/e2e",
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx eslint src/ tests/",
+    "format": "bunx prettier --write src/ tests/ specs/",
+    "build": "bun build src/cli.ts --target=bun --outfile=dist/nimbus.js",
+    "spec": "bun run scripts/spec/index.ts",
+    "compile:linux-x64": "bun build --compile --target=bun-linux-x64 src/cli.ts --outfile dist/nimbus-linux-x64",
+    "compile:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/cli.ts --outfile dist/nimbus-linux-arm64",
+    "compile:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/cli.ts --outfile dist/nimbus-darwin-x64",
+    "compile:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 src/cli.ts --outfile dist/nimbus-darwin-arm64",
+    "compile:windows-x64": "bun build --compile --target=bun-windows-x64 src/cli.ts --outfile dist/nimbus-windows-x64.exe"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "openai": "^4.76.0",
+    "zod": "^3.23.8",
+    "gray-matter": "^4.0.3",
+    "shell-quote": "^1.8.1",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "graceful-fs": "^4.2.11"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "@types/shell-quote": "^1.7.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  }
+}
