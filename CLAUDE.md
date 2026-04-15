@@ -81,59 +81,99 @@ SDD is the **internal methodology** for building nimbus-os. The `bun run spec` s
 ### Commit Format
 `[SPEC-XXX] imperative subject` (e.g., `[SPEC-101] implement workspace lifecycle`)
 
-### Team workflow — proven pattern from v0.1.0-alpha
+### Team workflow — THE construction method (do NOT improvise)
 
-How work gets done here. Follow this shape when a session starts a new task.
+**Principle**: on nimbus-os, any non-trivial task is built by a full expert team, not a single agent. Specs come first, multi-angle review follows, QA smokes the compiled binary, and fixes loop back through developers until green. This was validated across the v0.1.0-alpha sprint (6 HIGH fixes, 527 tests green on 3 OS).
 
-**Roles (model choice matters)**
-- **team-lead** = Opus — you (coordination, plan, spec review, final decisions, risk calls)
-- **spec-writer-{core,tools,infra}** = Sonnet — parallel spec drafting
-- **developer-{core,providers,key,cli-onboard,platform,...}** = Sonnet — parallel implementation
-- **reviewer-architect / reviewer-security** = Opus — when specs or code are security/identity-critical
-- **qa-engineer** = Sonnet — smoke tests against compiled binary, *not* just `bun test`
-- **vision-auditor** = Opus — UX research for feature gaps (e.g., "how do peer tools solve X?")
+#### Model tiers (cost-aware, don't burn Opus on impl)
 
-Use Opus sparingly — only where judgment/synthesis is load-bearing. Default to Sonnet.
+| Role | Model | When |
+|------|-------|------|
+| team-lead | **Opus** | Coordination, spec review, final decisions, risk calls |
+| spec-writer-{core,tools,infra} | Sonnet | Parallel spec drafting |
+| reviewer-architect | **Opus** | Spec alignment with plan + META contracts |
+| reviewer-security | **Opus** | Bash / path / network / secrets / identity code |
+| reviewer-performance | **Opus** | Hot paths, streaming, concurrency |
+| reviewer-cost | **Opus** | Provider selection, cache, optimizer logic |
+| vision-auditor | **Opus** | UX gap research — "how do peer tools solve X?" |
+| developer-{core,providers,platform,tools,key,cli-onboard,...} | Sonnet | Parallel implementation |
+| qa-engineer | Sonnet | Smoke tests against the **compiled binary** |
 
-**Loop pattern (continuous)**
+Rule: Opus only where judgment/synthesis is load-bearing. Developers default to Sonnet. If a task looks trivial enough to do single-handed, double-check — usually at least a spec + review + test are still needed.
 
-```
-1. Team-lead decomposes user ask into tasks (TaskCreate)
-2. Spawn parallel teammates: spec-writers first, then developers, then QA
-3. QA runs smoke against compiled binary → finds issue
-4. Team-lead assigns fix to `developer-X` (SendMessage + TaskUpdate)
-5. Developer ships fix, rebuilds binary
-6. QA re-smokes → if green, team-lead commits+tags; if red, go back to 4
-7. At milestone (tag ready): commit + tag + push + CD auto-publishes binaries
-```
+#### The loop (follow in order)
 
-**QA discipline** — test the compiled binary, not just `bun test`. Unit tests catch logic; binary smoke catches config-loading, env-priority, and cross-platform bugs. When a QA step reveals a fix candidate, team-lead should reproduce the QA path locally before assigning — cheaper than a dev round-trip on a misdiagnosed issue.
+**Phase 1 — Plan (team-lead, Opus)**
+1. Decompose the user ask into discrete TaskCreate items.
+2. Identify which META/SPEC docs apply and which are missing.
+3. Pick models for each role (use the tier table above).
 
-**Assigning fixes (concrete)** — write the message like you'd hand off to a colleague: ticket ID, reproduction steps verbatim, suspected root cause with file:line, the 2-3 design choices and your chosen option with reasoning, expected LoC delta, test additions required, and "rebuild binary + ping back" as the exit criterion. Don't say "fix the bug" — say "drop the kind-mismatch guard in `alignWorkspaceBaseUrl`, always-align when `--base-url` is explicit, print notice before write, idempotent same-kind+same-url no-op".
+**Phase 2 — Spec (spec-writer, Sonnet, parallel)**
+4. Spawn spec-writers in parallel. Each drafts 1-3 specs using `/specs/templates/feature.spec.md`.
+5. Specs must include all 6 elements + explicit `files_touched`.
+6. Run `bun run spec validate` — must be 0 errors.
 
-**Idle notifications** — when a teammate pings `idle_notification`, either assign next work or send one-line "stand down, next up is X". Don't let them spin.
+**Phase 3 — Multi-angle review (parallel Opus reviewers)**
+7. Spawn reviewers in parallel, each reading the same specs through a different lens:
+   - architect → consistency with plan + META + existing specs
+   - security → threat model, deny-lists, validation gaps
+   - performance → hot paths, allocations, streaming correctness
+   - cost → provider/model routing, cache strategy, token budget
+8. Team-lead reconciles review comments, pushes revisions back to spec-writers if needed.
+9. Specs go `draft → approved` only when all reviewers green.
 
-**Milestone tag workflow**
-1. QA green on compiled binary → `git add … && git commit -m '[SPEC-…] …'`
-2. `git tag -a vX.Y.Z-tier -m "…" && git push origin main vX.Y.Z-tier`
-3. CD (`.github/workflows/release.yml`) auto-builds 5 binaries + SHA256SUMS and attaches to GitHub Release
-4. Update `CHANGELOG.md` in the same commit as the tag, not after
+**Phase 4 — Implementation (developer, Sonnet, parallel)**
+10. Spawn developers, one per module. Each receives the approved spec(s) + a concrete brief with files, expected LoC, test additions.
+11. Developers write impl + tests in the same commit as the spec (SDD: spec+code atomic).
+12. Each developer runs `bun test` + `bun run typecheck` + `bun run spec validate` before signaling done.
 
-**User-facing CLI vs dev scripts — load-bearing distinction**
-- `nimbus <verb>` = user product (init, key, daemon, cost)
-- `bun run <script>` = dev tool (spec list, typecheck, test, compile:*)
-- Never expose SDD tooling as `nimbus spec`. Dev tools live in `scripts/`, not `src/`.
+**Phase 5 — QA (qa-engineer, Sonnet)**
+13. QA compiles the binary (`bun run compile:linux-x64`) and smoke-tests the user flow end-to-end. **Unit tests are not enough** — binary smoke catches config-loading, env-priority, path resolution, and cross-platform bugs.
+14. If a failure is found → team-lead reproduces locally first (don't round-trip on misdiagnosis) → assigns a **concrete fix** to the responsible developer.
 
-**Cross-platform testing**
-- Unix-specific paths (`/etc`, `/tmp`, `/etc/shadow`) must be gated with `process.platform !== 'win32'` (or `=== 'linux'` when even more specific).
-- Symlink-based tests need `describe.skipIf(win32)` (Windows requires Developer Mode/admin).
-- Use `tmpdir()` + `join()` for ephemeral paths, never string-literal `/tmp/…`.
-- CI matrix (Linux+macOS+Windows) enforces this — local `bun test` on Linux is not sufficient evidence.
+**Fix brief template (use verbatim when assigning)**:
+- Ticket ID + reproduction steps exactly as QA ran them
+- Suspected root cause with `file:line`
+- 2-3 design options with the chosen one + why
+- Expected LoC delta (should be small; if not, split)
+- Test additions required
+- Exit criterion: "rebuild binary + ping back"
 
-**Commit & push hygiene**
+15. Developer ships fix → QA re-smokes → loop until green.
+
+**Phase 6 — Milestone (team-lead)**
+16. When QA green, commit spec+code+tests atomically. Message body explains WHY, not WHAT.
+17. Tag: `git tag -a vX.Y.Z-tier -m "…"` and push. CD (`.github/workflows/release.yml`) auto-builds 5 binaries + SHA256SUMS and attaches to the GitHub Release.
+18. Update `CHANGELOG.md` in the same commit as the tag, not after.
+
+#### Idle teammates
+
+When a teammate sends `idle_notification`, either (a) assign next work with a concrete brief, or (b) reply one-line "stand down, next up is X". Never leave them spinning.
+
+#### User-facing CLI vs dev scripts — load-bearing distinction
+
+- `nimbus <verb>` = user product (`init`, `key`, `daemon`, `cost`). Lives in `src/cli.ts` and is compiled into the binary.
+- `bun run <script>` = dev tool (`spec list`, `typecheck`, `test`, `compile:*`). Lives in `scripts/` and is never shipped to users.
+- Never expose SDD tooling as `nimbus spec`. This is a hard rule.
+
+#### Cross-platform testing
+
+- Unix-specific paths (`/etc`, `/etc/shadow`) → gate with `process.platform === 'linux' ? test : test.skip`.
+- Symlink-based tests → wrap block in `process.platform === 'win32' ? describe.skip : describe`. Windows requires Developer Mode or admin for `symlinkSync`.
+- Ephemeral temp dirs → `join(tmpdir(), 'nimbus-…')`, never literal `/tmp/…`.
+- CI matrix (Linux + macOS + Windows) enforces this. Local `bun test` on Linux is not sufficient evidence that CI will be green.
+
+#### Commit & push hygiene
+
 - Branch `main` is protected: linear history only, 3-OS CI must pass, no force-push, no deletion.
-- For v0.1.0-alpha we committed straight to main (single-dev flow). Once the project has external contributors, switch to PR-only flow. The branch protection already blocks force-push, so this is safe.
-- Commit message body explains WHY not WHAT. File list is already in the diff.
+- Currently committing straight to main (single-dev flow). When external contributors join, switch to PR-only. Branch protection already blocks force-push, so this is safe to defer.
+- Commit message body explains WHY not WHAT — the file list is already in the diff.
+
+#### When NOT to run the full loop
+
+- Trivial one-file edits the user asked for directly (typos, README wording).
+- Pure research/read-only questions.
+- When the user says "đi thẳng" / "làm nhanh" / "skip spec" — respect the shortcut but note it in CHANGELOG.
 
 ## 5. Where to Find Things
 
