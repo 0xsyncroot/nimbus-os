@@ -81,6 +81,60 @@ SDD is the **internal methodology** for building nimbus-os. The `bun run spec` s
 ### Commit Format
 `[SPEC-XXX] imperative subject` (e.g., `[SPEC-101] implement workspace lifecycle`)
 
+### Team workflow — proven pattern from v0.1.0-alpha
+
+How work gets done here. Follow this shape when a session starts a new task.
+
+**Roles (model choice matters)**
+- **team-lead** = Opus — you (coordination, plan, spec review, final decisions, risk calls)
+- **spec-writer-{core,tools,infra}** = Sonnet — parallel spec drafting
+- **developer-{core,providers,key,cli-onboard,platform,...}** = Sonnet — parallel implementation
+- **reviewer-architect / reviewer-security** = Opus — when specs or code are security/identity-critical
+- **qa-engineer** = Sonnet — smoke tests against compiled binary, *not* just `bun test`
+- **vision-auditor** = Opus — UX research for feature gaps (e.g., "how do peer tools solve X?")
+
+Use Opus sparingly — only where judgment/synthesis is load-bearing. Default to Sonnet.
+
+**Loop pattern (continuous)**
+
+```
+1. Team-lead decomposes user ask into tasks (TaskCreate)
+2. Spawn parallel teammates: spec-writers first, then developers, then QA
+3. QA runs smoke against compiled binary → finds issue
+4. Team-lead assigns fix to `developer-X` (SendMessage + TaskUpdate)
+5. Developer ships fix, rebuilds binary
+6. QA re-smokes → if green, team-lead commits+tags; if red, go back to 4
+7. At milestone (tag ready): commit + tag + push + CD auto-publishes binaries
+```
+
+**QA discipline** — test the compiled binary, not just `bun test`. Unit tests catch logic; binary smoke catches config-loading, env-priority, and cross-platform bugs. When a QA step reveals a fix candidate, team-lead should reproduce the QA path locally before assigning — cheaper than a dev round-trip on a misdiagnosed issue.
+
+**Assigning fixes (concrete)** — write the message like you'd hand off to a colleague: ticket ID, reproduction steps verbatim, suspected root cause with file:line, the 2-3 design choices and your chosen option with reasoning, expected LoC delta, test additions required, and "rebuild binary + ping back" as the exit criterion. Don't say "fix the bug" — say "drop the kind-mismatch guard in `alignWorkspaceBaseUrl`, always-align when `--base-url` is explicit, print notice before write, idempotent same-kind+same-url no-op".
+
+**Idle notifications** — when a teammate pings `idle_notification`, either assign next work or send one-line "stand down, next up is X". Don't let them spin.
+
+**Milestone tag workflow**
+1. QA green on compiled binary → `git add … && git commit -m '[SPEC-…] …'`
+2. `git tag -a vX.Y.Z-tier -m "…" && git push origin main vX.Y.Z-tier`
+3. CD (`.github/workflows/release.yml`) auto-builds 5 binaries + SHA256SUMS and attaches to GitHub Release
+4. Update `CHANGELOG.md` in the same commit as the tag, not after
+
+**User-facing CLI vs dev scripts — load-bearing distinction**
+- `nimbus <verb>` = user product (init, key, daemon, cost)
+- `bun run <script>` = dev tool (spec list, typecheck, test, compile:*)
+- Never expose SDD tooling as `nimbus spec`. Dev tools live in `scripts/`, not `src/`.
+
+**Cross-platform testing**
+- Unix-specific paths (`/etc`, `/tmp`, `/etc/shadow`) must be gated with `process.platform !== 'win32'` (or `=== 'linux'` when even more specific).
+- Symlink-based tests need `describe.skipIf(win32)` (Windows requires Developer Mode/admin).
+- Use `tmpdir()` + `join()` for ephemeral paths, never string-literal `/tmp/…`.
+- CI matrix (Linux+macOS+Windows) enforces this — local `bun test` on Linux is not sufficient evidence.
+
+**Commit & push hygiene**
+- Branch `main` is protected: linear history only, 3-OS CI must pass, no force-push, no deletion.
+- For v0.1.0-alpha we committed straight to main (single-dev flow). Once the project has external contributors, switch to PR-only flow. The branch protection already blocks force-push, so this is safe.
+- Commit message body explains WHY not WHAT. File list is already in the diff.
+
 ## 5. Where to Find Things
 
 | Thing | Location |
@@ -112,35 +166,41 @@ SDD is the **internal methodology** for building nimbus-os. The `bun run spec` s
 
 ## 7. Active Work
 
-Check `/specs/_index.md` for in-progress specs.
+**Shipped**: v0.1.0-alpha (2026-04-15). https://github.com/0xsyncroot/nimbus-os/releases/tag/v0.1.0-alpha
+- 42 specs validated (6 META + 36 feature) • 527 unit tests pass on all 3 OS
+- CI (Linux/macOS/Windows) + CD (5-target binary release on tag) wired, branch protection enabled
+- PolyForm Noncommercial 1.0.0 license
 
-**Current focus**: v0.1 MVP scaffolding. Next up (in order):
-1. Meta specs (META-001 → META-010) — in progress
-2. Feature specs (SPEC-101 → SPEC-911) — pending
-3. SPEC-911 SDD spec dev tooling (`bun run spec ...`, internal — used to validate specs)
-4. SPEC-151+152 `platform/` module (paths, shell, secrets — foundation)
-5. SPEC-201+202+203 IR + providers
-6. SPEC-101+102+103 core (workspace, session, loop)
-7. ... tiếp tục theo deps DAG
+**v0.1.1 polish queue** (order of value):
+1. **#37 — SPEC-206 v0.1 subset** (~80 LoC): reasoning-mode resolver + cue detect + `/thinking` slash + capability drop. Spec already approved.
+2. **OS keychain passphrase** — replace `NIMBUS_VAULT_PASSPHRASE` env requirement with platform keychain (SPEC-152 already scaffolded).
+3. **SPEC-903 v0.1 subset** (~120 LoC): model discovery fetch + cache + wizard picker. Spec approved.
+4. **`--no-prompt` flags** — `--provider / --endpoint / --base-url` so init can be scripted fully.
 
-## 8. Recent Decisions (latest 5)
+**v0.2 planning (after polish)**: Skills, MCP, compaction, budget enforcement, i18n, migrations. See `/specs/_index.md` for spec statuses.
+
+## 8. Recent Decisions (latest)
 
 Tracked in `/specs/CHANGELOG.md`. Key:
 
-- **2026-04-15** Adopted SDD (spec-first + spec-anchored). Reason: 1-dev + AI-assisted requires durable truth.
-- **2026-04-15** Chose `playwright-core` Chromium-only for v0.4 browser. Reason: -1GB vs full Playwright.
-- **2026-04-15** JSONL not SQLite for sessions. Reason: append-only crash-safe + grep debug.
-- **2026-04-15** Platform abstraction from v0.1 (not retrofit). Reason: 3× effort later.
-- **2026-04-15** Cost enforcement deferred to v0.2. Reason: v0.1 scope realistic 4200 LoC.
-- **2026-04-15** Plugin system v0.5 (not v0.4). Reason: Security — signed allowlist only.
-- **2026-04-15** CI matrix Win/macOS/Linux from v0.1. Reason: catch platform bugs early.
+- **2026-04-15** v0.1.0-alpha shipped. License = PolyForm Noncommercial 1.0.0 (personal free, commercial contact author).
+- **2026-04-15** `key set --base-url` always aligns workspace (cross-kind switch OK). Reason: explicit `--base-url` is a clear intent signal; silent skip caused QA smoke U_MISSING_CONFIG.
+- **2026-04-15** baseUrl priority chain at resolve time: `cliBaseUrl > configBaseUrl > vaultBaseUrl > endpointDefault`. All callers funnel through `resolveProviderKey`.
+- **2026-04-15** CI drops `bunfig` coverage threshold — it was failing valid builds.
+- **2026-04-15** Release pipeline builds binaries on GitHub runners per-tag, not locally.
+- **2026-04-15** Adopted SDD (spec-first + spec-anchored).
+- **2026-04-15** `playwright-core` Chromium-only for v0.4 browser.
+- **2026-04-15** JSONL not SQLite for sessions.
+- **2026-04-15** Platform abstraction from v0.1 (not retrofit).
+- **2026-04-15** Cost enforcement deferred to v0.2.
+- **2026-04-15** Plugin system v0.5 with signed allowlist.
 
 ## 9. Open Questions (need user decision)
 
-- [ ] License choice (MIT / Apache 2 / AGPL?)
 - [ ] Workspace rename semantics (v0.2?)
 - [ ] Telemetry opt-in (default OFF)
 - [ ] Plugin allowlist curator (who signs community plugins?)
+- [x] ~~License choice~~ — PolyForm NC 1.0.0 (2026-04-15)
 
 ## 10. Memory for Next Session
 
