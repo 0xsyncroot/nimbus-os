@@ -60,16 +60,16 @@ files_touched:
 ## 3. Constraints
 
 ### Technical
-- Fetch timeout 5s hard; config override via `catalog.fetchTimeoutMs`
-- Fetch NON-blocking: skip (`s`) and custom (`c`) keys always available even before fetch resolves
-- Cache file mode 0644 (public metadata, not sensitive); key/endpoint path kept separate (SPEC-152)
-- HTTPS only except Ollama localhost (`127.0.0.1` / `localhost` only)
-- Max 200 model entries; over → truncate + warn `[MODELS] list truncated to 200`
+- 5s fetch timeout; override via `catalog.fetchTimeoutMs`
+- Non-blocking: `s` (skip) + `c` (custom) always available even pre-fetch
+- Cache file 0644 (public metadata); key separate via SPEC-152
+- HTTPS only except Ollama loopback (`127.0.0.1`/`localhost`)
+- Max 200 entries; over → truncate + warn
 
 ### Security
-- Key NEVER logged or cached; only the `endpointHash` (first 8 of sha256) appears in cache filename
-- Response size hard-capped 500KB pre-parse
-- Ollama HTTPS bypass ONLY when host resolves to loopback; other non-HTTPS URLs rejected
+- Key never logged/cached; only endpointHash (first 8 of sha256) in filename
+- Response 500KB hard cap pre-parse
+- HTTPS bypass only when host resolves to loopback
 
 ## 4. Prior Decisions
 
@@ -156,10 +156,10 @@ export interface ModelCatalog {
 
 ## 9. Open Questions
 
-- [ ] Cache keyed by `endpointHash` — what if user rotates key on same endpoint? (lean: key rotation doesn't invalidate catalog; models are endpoint-scoped, not key-scoped)
-- [ ] Multiple Ollama instances (localhost + Tailscale) — separate catalog each? (lean yes, endpointHash handles it)
-- [ ] Should curated fallback list show ALL priceTable entries or just the user's active provider? (lean: provider-scoped, reduce picker noise)
+- [ ] Key rotation on same endpoint — invalidate catalog? (lean no — models are endpoint-scoped)
+- [ ] Multiple Ollama (localhost + Tailscale) — separate catalog each? (endpointHash handles it)
+- [ ] Curated fallback: all priceTable or provider-scoped? (lean provider-scoped)
 
 ## 10. Changelog
 
-- 2026-04-15 @hiepht: draft — Option E per vision-auditor; v0.1 core T1-T5+T7 (~120 LoC); CLI + advanced inference + invalidation heuristics deferred v0.2
+- 2026-04-15 @hiepht: draft Option E; v0.1 core T1-T5+T7 (~120 LoC); T6/T8/T9 deferred v0.2
