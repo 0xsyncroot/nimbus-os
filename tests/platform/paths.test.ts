@@ -1,6 +1,8 @@
 // tests/platform/paths.test.ts (SPEC-151 §6.1)
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { cacheDir, configDir, dataDir, logsDir, nimbusHome, workspacesDir } from '../../src/platform/paths.ts';
 import { __resetDetectCache } from '../../src/platform/detect.ts';
 import { NimbusError, ErrorCode } from '../../src/observability/errors.ts';
@@ -19,13 +21,14 @@ describe('SPEC-151: paths', () => {
   });
 
   test('NIMBUS_HOME override applied to all dirs', () => {
-    process.env['NIMBUS_HOME'] = '/tmp/nimbus-override';
-    expect(nimbusHome()).toBe('/tmp/nimbus-override');
-    expect(configDir().startsWith('/tmp/nimbus-override')).toBe(true);
-    expect(cacheDir().startsWith('/tmp/nimbus-override')).toBe(true);
-    expect(dataDir().startsWith('/tmp/nimbus-override')).toBe(true);
-    expect(logsDir().startsWith('/tmp/nimbus-override')).toBe(true);
-    expect(workspacesDir().startsWith('/tmp/nimbus-override')).toBe(true);
+    const override = join(tmpdir(), 'nimbus-override');
+    process.env['NIMBUS_HOME'] = override;
+    expect(nimbusHome()).toBe(override);
+    expect(configDir().startsWith(override)).toBe(true);
+    expect(cacheDir().startsWith(override)).toBe(true);
+    expect(dataDir().startsWith(override)).toBe(true);
+    expect(logsDir().startsWith(override)).toBe(true);
+    expect(workspacesDir().startsWith(override)).toBe(true);
   });
 
   test('rejects non-absolute NIMBUS_HOME', () => {

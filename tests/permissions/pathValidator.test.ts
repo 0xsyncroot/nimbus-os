@@ -128,12 +128,18 @@ describe('SPEC-401: pathValidator — traversal + edge cases', () => {
   });
 });
 
-describe('SPEC-401: pathValidator — symlink TOCTOU guard', () => {
+// Windows requires Developer Mode or admin for symlink creation; skip whole block.
+// /etc/shadow is Linux-only; that test additionally gated below.
+const describeSymlink = process.platform === 'win32' ? describe.skip : describe;
+
+describeSymlink('SPEC-401: pathValidator — symlink TOCTOU guard', () => {
   let workDir: string;
   beforeEach(() => { workDir = mkdtempSync(join(tmpdir(), 'nimbus-sym-')); });
   afterEach(() => { try { rmSync(workDir, { recursive: true, force: true }); } catch {/* noop */} });
 
-  test('rejects symlink pointing at /etc/shadow', () => {
+  const testLinuxOnly = process.platform === 'linux' ? test : test.skip;
+
+  testLinuxOnly('rejects symlink pointing at /etc/shadow', () => {
     const link = join(workDir, 'bait.txt');
     try {
       symlinkSync('/etc/shadow', link);

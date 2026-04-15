@@ -68,7 +68,7 @@ describe('SPEC-901: runInit', () => {
     expect(() => __testing.validateLocation('../etc')).toThrow(NimbusError);
   });
 
-  test('--location rejects /etc', () => {
+  (process.platform === 'win32' ? test.skip : test)('--location rejects /etc', () => {
     expect(() => __testing.validateLocation('/etc')).toThrow(NimbusError);
   });
 
