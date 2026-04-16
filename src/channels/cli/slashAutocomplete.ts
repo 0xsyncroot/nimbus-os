@@ -216,21 +216,23 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
     const promptLen = getPromptLen();
     const bufLen = buffer.length;
 
-    // Save cursor, clear below, redraw prompt+buffer
-    let out = `${SAVE_CURSOR}${CLEAR_BELOW}`;
-    // Move to column 0 first
-    out += '\r';
-    out += CLEAR_LINE;
-    out += prompt;
-    out += buffer;
+    // BUG FIX: don't SAVE_CURSOR/RESTORE_CURSOR + moveCursorRight around the
+    // redraw. SAVE captures the PRE-redraw cursor position (often wrong after
+    // a prior dropdown render). RESTORE then moveRight compounds the error,
+    // pushing cursor past end-of-buffer → visible padding spaces on each
+    // keystroke. The redraw writes prompt+buffer starting at col 0; after
+    // that write, cursor is exactly at end-of-buffer already — no
+    // repositioning needed.
+    let out = '\r' + CLEAR_LINE + CLEAR_BELOW + prompt + buffer;
     output.write(out);
 
     if (dropdownState.isOpen && filtered.length > 0) {
+      // Cursor is currently at end-of-buffer. Save it, render dropdown BELOW,
+      // then restore so subsequent typing appears on the prompt line.
+      output.write(SAVE_CURSOR);
       renderDropdown(output, filtered, dropdownState, promptLen, bufLen, cols());
+      output.write(RESTORE_CURSOR);
     }
-
-    // Restore cursor then move right to after buffer
-    output.write(`${RESTORE_CURSOR}${moveCursorRight(promptLen + bufLen)}`);
   }
 
   function selectUp(): void {
