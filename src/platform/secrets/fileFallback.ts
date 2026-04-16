@@ -1,7 +1,9 @@
 // fileFallback.ts — AES-256-GCM encrypted JSON vault (SPEC-152 T5)
+// Also exports autoProvisionPassphrase() used by init + key flows (SPEC-901 v0.2.1).
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import { dirname, join } from 'node:path';
 import type { SecretStore, VaultEnvelope } from './index.ts';
 import { VaultEnvelopeSchema } from './index.ts';
@@ -28,6 +30,9 @@ interface CachedKey {
 let cachedKey: CachedKey | null = null;
 let zeroHandlerRegistered = false;
 
+/** In-memory passphrase set by autoProvisionPassphrase() — takes priority over env var. */
+let provisionedPassphrase: string | null = null;
+
 function registerZeroOnExit(): void {
   if (zeroHandlerRegistered) return;
   zeroHandlerRegistered = true;
@@ -45,11 +50,12 @@ function vaultPath(): string {
 }
 
 function getPassphrase(): string {
+  if (provisionedPassphrase) return provisionedPassphrase;
   const pp = process.env['NIMBUS_VAULT_PASSPHRASE'];
   if (!pp) {
     throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
       reason: 'missing_passphrase',
-      hint: 'set NIMBUS_VAULT_PASSPHRASE or call setPassphrase() before use',
+      hint: 'set NIMBUS_VAULT_PASSPHRASE or call autoProvisionPassphrase() before use',
     });
   }
   return pp;
@@ -215,4 +221,119 @@ export function __resetFileFallbackKey(): void {
     cachedKey.salt.fill(0);
     cachedKey = null;
   }
+}
+
+/** Test-only: reset provisioned passphrase. */
+export function __resetProvisionedPassphrase(): void {
+  provisionedPassphrase = null;
+}
+
+const VAULT_KEY_FILENAME = '.vault-key';
+
+function vaultKeyFilePath(): string {
+  return join(nimbusHome(), VAULT_KEY_FILENAME);
+}
+
+/**
+ * autoProvisionPassphrase — ensure the vault has a passphrase before first use.
+ * Priority:
+ *   1. NIMBUS_VAULT_PASSPHRASE env var (CI/scripted installs)
+ *   2. OS keychain (key: nimbus-os / vault-passphrase)
+ *   3. ~/.nimbus/.vault-key file (0600) — generate + store on first run
+ *   4. Interactive prompt (only if TTY available)
+ *
+ * After this call returns, getPassphrase() will succeed without throwing.
+ */
+export async function autoProvisionPassphrase(
+  io?: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream },
+): Promise<void> {
+  // 1. Already provisioned this process — skip.
+  if (provisionedPassphrase) return;
+
+  // 2. Env var takes highest precedence.
+  const envPp = process.env['NIMBUS_VAULT_PASSPHRASE'];
+  if (envPp) {
+    provisionedPassphrase = envPp;
+    return;
+  }
+
+  // 3. Try OS keychain/secret-service via getBest() — only if non-file backend.
+  try {
+    const { getBest } = await import('./index.ts');
+    const store = await getBest();
+    if (store.backend !== 'file-fallback') {
+      try {
+        const stored = await store.get('nimbus-os', 'vault-passphrase');
+        if (stored && stored.length > 0) {
+          provisionedPassphrase = stored;
+          return;
+        }
+      } catch {
+        // Not found in keychain — generate and store.
+        const generated = randomBytes(32).toString('base64');
+        await store.set('nimbus-os', 'vault-passphrase', generated);
+        provisionedPassphrase = generated;
+        return;
+      }
+    }
+  } catch {
+    // Keychain unavailable — fall through to file.
+  }
+
+  // 4. Try ~/.nimbus/.vault-key file.
+  const keyFile = vaultKeyFilePath();
+  try {
+    const contents = await readFile(keyFile, { encoding: 'utf8' });
+    const pp = contents.trim();
+    if (pp.length > 0) {
+      provisionedPassphrase = pp;
+      return;
+    }
+  } catch {
+    // File not found — will create below.
+  }
+
+  // 5. Generate a new passphrase and write to file.
+  // If TTY available, we could prompt — but for a smoother UX, auto-generate silently.
+  const output = io?.output ?? process.stdout;
+  const generated = randomBytes(32).toString('base64');
+
+  try {
+    await mkdir(dirname(keyFile), { recursive: true });
+    await writeFile(keyFile, generated, { encoding: 'utf8' });
+    if (process.platform !== 'win32') {
+      await chmod(keyFile, 0o600);
+    }
+    provisionedPassphrase = generated;
+    return;
+  } catch {
+    // File write failed — try interactive prompt as last resort.
+  }
+
+  // 6. Interactive prompt (last resort — only if TTY).
+  const input = io?.input ?? process.stdin;
+  const isTTY = (input as { isTTY?: boolean }).isTTY === true;
+  if (isTTY) {
+    const rl = createInterface({ input, output: output as NodeJS.WritableStream, terminal: false });
+    const pp = await new Promise<string>((resolve) => {
+      rl.question('  Set a vault passphrase (saves to ~/.nimbus/.vault-key): ', (ans: string) => {
+        rl.close();
+        resolve(ans.trim());
+      });
+    });
+    if (pp.length >= 8) {
+      provisionedPassphrase = pp;
+      try {
+        await mkdir(dirname(keyFile), { recursive: true });
+        await writeFile(keyFile, pp, { encoding: 'utf8' });
+        if (process.platform !== 'win32') await chmod(keyFile, 0o600);
+      } catch {
+        // best-effort file write
+      }
+      return;
+    }
+  }
+
+  // Nothing worked — will throw later when vault is actually used.
+  // This avoids a hard failure during init before the key step.
 }

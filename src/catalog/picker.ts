@@ -1,5 +1,9 @@
 // SPEC-903 T7 — readline picker: ↑↓ navigate, Enter select, `c` custom, `s` skip.
 // Falls through to free-text entry when model list is empty or TTY unavailable.
+// Generic pickOne utility lives in src/onboard/picker.ts — re-exported here for convenience.
+export type { PickerItem, PickerOpts, PickOneResult } from '../onboard/picker.ts';
+export { pickOne } from '../onboard/picker.ts';
+
 import type { ModelDescriptor } from './types.ts';
 
 export interface PickerIO {

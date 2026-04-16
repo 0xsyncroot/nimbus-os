@@ -6,7 +6,7 @@ import { chmod, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __resetSecretStoreCache, getBest, redactSecret } from '../../../src/platform/secrets/index.ts';
-import { createFileFallback, __resetFileFallbackKey } from '../../../src/platform/secrets/fileFallback.ts';
+import { createFileFallback, __resetFileFallbackKey, __resetProvisionedPassphrase } from '../../../src/platform/secrets/fileFallback.ts';
 import { NimbusError, ErrorCode } from '../../../src/observability/errors.ts';
 import { __resetDetectCache } from '../../../src/platform/detect.ts';
 
@@ -79,6 +79,7 @@ describe('SPEC-152: file fallback', () => {
     process.env['NIMBUS_HOME'] = tmpRoot;
     process.env['NIMBUS_VAULT_PASSPHRASE'] = 'test-pass-A';
     __resetFileFallbackKey();
+    __resetProvisionedPassphrase();
     __resetDetectCache();
   });
 
@@ -89,6 +90,7 @@ describe('SPEC-152: file fallback', () => {
     if (originalPass !== undefined) process.env['NIMBUS_VAULT_PASSPHRASE'] = originalPass;
     else delete process.env['NIMBUS_VAULT_PASSPHRASE'];
     __resetFileFallbackKey();
+    __resetProvisionedPassphrase();
     __resetDetectCache();
   });
 

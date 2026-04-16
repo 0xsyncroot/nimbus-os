@@ -2,8 +2,9 @@
 // cli.ts — nimbus CLI entry point (user-facing AI OS commands)
 // Routes: `nimbus init` → onboard wizard; `nimbus` → REPL; `nimbus cost`/`--version`/`--help` → static.
 
-import { ErrorCode, NimbusError } from './observability/errors.ts';
+import { NimbusError } from './observability/errors.ts';
 import { logger } from './observability/logger.ts';
+import { printError } from './observability/errorFormat.ts';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -11,10 +12,12 @@ const cmd = args[0];
 interface ParsedFlags {
   force: boolean;
   noPrompt: boolean;
+  advanced: boolean;
   name?: string;
   location?: string;
   skipPermissions: boolean;
   skipKey: boolean;
+  verbose: boolean;
   provider?: string;
   endpoint?: string;
   baseUrl?: string;
@@ -24,13 +27,17 @@ function parseFlags(rest: string[]): ParsedFlags {
   const flags: ParsedFlags = {
     force: false,
     noPrompt: false,
+    advanced: false,
     skipPermissions: false,
     skipKey: false,
+    verbose: false,
   };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
     if (a === '--force') flags.force = true;
     else if (a === '--no-prompt') flags.noPrompt = true;
+    else if (a === '--advanced') flags.advanced = true;
+    else if (a === '--verbose' || a === '-V') flags.verbose = true;
     else if (a === '--dangerously-skip-permissions') flags.skipPermissions = true;
     else if (a === '--skip-key') flags.skipKey = true;
     else if (a === '--name') flags.name = rest[++i];
@@ -124,6 +131,7 @@ async function main(): Promise<number> {
       const opts: Parameters<typeof runInit>[0] = {
         force: flags.force,
         noPrompt: flags.noPrompt,
+        advanced: flags.advanced,
         skipKeyStep: flags.skipKey,
       };
       if (flags.location !== undefined) opts.location = flags.location;
@@ -186,14 +194,15 @@ Run \`nimbus <command> --help\` for command details.
 `);
 }
 
+const globalVerbose = args.includes('--verbose') || args.includes('-V');
+
 main()
   .then((code) => process.exit(code))
   .catch((err) => {
     if (err instanceof NimbusError) {
-      process.stderr.write(`[ERROR] ${err.code}: ${JSON.stringify(err.context)}\n`);
-      if (err.code === ErrorCode.U_MISSING_CONFIG && err.context['reason'] === 'no_active_workspace') {
-        process.stderr.write(`\nHint: run \`nimbus init\` to create your first workspace.\n`);
-      }
+      printError(err, globalVerbose);
+      // Also emit debug JSON to logger for structured log consumers.
+      logger.debug({ err: err.toJSON() }, 'nimbus_error');
       process.exit(2);
     }
     logger.error({ err: (err as Error).message, stack: (err as Error).stack }, 'fatal');

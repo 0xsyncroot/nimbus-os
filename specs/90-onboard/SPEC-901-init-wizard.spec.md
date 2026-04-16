@@ -2,20 +2,29 @@
 id: SPEC-901
 title: nimbus init wizard + SOUL template generator
 status: implemented
-version: 0.1.0
+version: 0.2.1
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.1
 layer: onboard
 depends_on: [SPEC-101, SPEC-501, SPEC-801, META-005]
 blocks: []
-estimated_loc: 200
+estimated_loc: 400
 files_touched:
   - src/onboard/init.ts
   - src/onboard/questions.ts
   - src/onboard/templates.ts
-  - tests/onboard/*.test.ts
+  - src/onboard/picker.ts
+  - src/catalog/picker.ts
+  - src/platform/secrets/fileFallback.ts
+  - src/observability/errorFormat.ts
+  - src/cli.ts
+  - src/key/cli.ts
+  - tests/onboard/picker.test.ts
+  - tests/onboard/templates.test.ts
+  - tests/platform/secrets/autoProvision.test.ts
+  - tests/observability/errorFormat.test.ts
   - src/onboard/templates/SOUL.template.md
   - src/onboard/templates/IDENTITY.template.md
   - src/onboard/templates/TOOLS.template.md
@@ -25,7 +34,11 @@ files_touched:
 
 ## 1. Outcomes
 
-- Running `nimbus init` in any directory creates a complete workspace in <10s including 5-8 user prompts
+- Running `nimbus init` in any directory creates a complete workspace in <10s with ≤3 prompts (default fast path)
+- Default fast path: provider picker (arrow keys), API key (env auto-detect), language picker (skippable)
+- `--advanced` flag restores full 7-question wizard for power users
+- Vault passphrase auto-provisioned (OS keychain → file fallback) — no `U_MISSING_CONFIG: missing_passphrase` on first run
+- Error messages are human-readable 2-line format: summary + action (no raw JSON to stdout)
 - Generates valid `SOUL.md` draft from answers — user can refine later, but v0.1 default is useable
 - Writes `IDENTITY.md`, `MEMORY.md` (empty sections), `TOOLS.md` (default manifest) + `CLAUDE.md` at repo root
 - Idempotent: re-running in existing workspace offers `--force` or aborts with `U_BAD_COMMAND`
@@ -33,7 +46,12 @@ files_touched:
 ## 2. Scope
 
 ### 2.1 In-scope
-- 5-8 interactive questions (workspace name, primary use-case, voice style, language, provider choice, default model class, bash rules preset — **conditional: only shown when `primaryUseCase` matches `code`/`dev`/`software`/`programming` case-insensitive; otherwise silently defaults to `balanced`**)
+- **Default fast path (v0.2.1)**: 3 prompts — provider picker (↑↓/Enter), API key (env auto-detect), language picker (skippable). All other fields auto-defaulted.
+- **`--advanced` flag**: restores full 7-question wizard (workspace name, primary use-case, voice style, language, provider choice, default model class, bash rules preset)
+- bash rules preset **conditional: only shown when `primaryUseCase` matches `code`/`dev`/`software`/`programming` case-insensitive; otherwise silently defaults to `balanced`**
+- **Auto-provision vault passphrase (v0.2.1)**: called at start of `runInit`, `quickInit`, and `key set` — eliminates `U_MISSING_CONFIG: missing_passphrase` on first run
+- **Human-readable errors (v0.2.1)**: `formatError(NimbusError)` returns `{summary, action}` 2-line format; raw JSON to `logger.debug` only
+- **Generic TTY picker (`src/onboard/picker.ts`)**: `pickOne<T>()` extracted from catalog picker pattern — re-used by catalog picker
 - **Model picker step (SPEC-903)** — runs after key step (SPEC-902): live-fetch `/v1/models` (Anthropic/OpenAI-compat/Ollama) → interactive picker (↑↓/Enter/c/s). On timeout/offline/4xx → `[MODELS] using curated list, may be stale` banner + priceTable fallback; user can always `c` (custom) or `s` (skip = keep default from model-class). Picker output overrides `defaultModel` via `updateWorkspace()`.
 - Template renderer (simple `${var}` substitution; no full templating engine)
 - Write **6 workspace markdown files** (SOUL, IDENTITY, MEMORY, TOOLS, DREAMS — all always generated; IDENTITY and DREAMS as minimal stubs even though META-005 marks them OPTIONAL) + CLAUDE.md at chosen location
@@ -174,3 +192,4 @@ Primary purpose: ${primaryUseCase}
 - 2026-04-15 @hiepht: T4b hooks SPEC-902 key prompt/validate/store (#24)
 - 2026-04-15 @hiepht: T6 adds endpoint + baseUrl prompts for openai-compat providers (Task #31 — enables vLLM/Ollama/Azure/LiteLLM without manual workspace.json edit)
 - 2026-04-15 @hiepht: T7 adds model-picker hook to SPEC-903 (Task #45) — live /v1/models fetch + interactive picker replaces class-based default when user selects; graceful degrade to curated priceTable fallback.
+- 2026-04-16 @hiepht: v0.2.1 — reduced default init to 3 picker prompts (provider↑↓, key, language); `--advanced` flag preserves full 7-question wizard; extracted generic `pickOne<T>()` to `src/onboard/picker.ts`; auto-provision vault passphrase (OS keychain → .vault-key file → interactive) called at start of `runInit`/`quickInit`/`key set` — eliminates `U_MISSING_CONFIG: missing_passphrase`; added `src/observability/errorFormat.ts` with human-readable 2-line messages for top-10 error codes; raw JSON demoted to `logger.debug`; `--verbose` flag on CLI surfaces debug detail.

@@ -3,6 +3,7 @@
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { createKeyManager, type KeyManager } from './manager.ts';
 import { promptApiKey, readKeyFromStdin } from '../onboard/keyPrompt.ts';
+import { autoProvisionPassphrase } from '../platform/secrets/fileFallback.ts';
 
 interface KeyCliOpts {
   argv: string[];
@@ -74,6 +75,9 @@ async function handleSet(
   input: NodeJS.ReadStream,
   output: NodeJS.WritableStream,
 ): Promise<number> {
+  // Auto-provision vault passphrase before any key write.
+  await autoProvisionPassphrase({ input, output });
+
   const flags = parseSetFlags(args);
   if (!flags.provider) {
     throw new NimbusError(ErrorCode.U_BAD_COMMAND, {

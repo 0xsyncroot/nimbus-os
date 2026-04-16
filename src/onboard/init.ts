@@ -1,4 +1,5 @@
 // init.ts — SPEC-901 T4/T5: orchestrate init wizard → workspace + 6 files + .dreams/.
+// v0.2.1: 3-prompt fast path (provider picker + key + language); --advanced flag for full wizard.
 
 import { join, isAbsolute, normalize } from 'node:path';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -20,10 +21,13 @@ import { validateKeyFormat, detectProviderFromKey } from './keyValidators.ts';
 import { createKeyManager, type KeyManager } from '../key/manager.ts';
 import { discoverModels, type DiscoverProvider } from '../catalog/discover.ts';
 import { pickModel } from '../catalog/picker.ts';
+import { pickOne } from './picker.ts';
+import { autoProvisionPassphrase } from '../platform/secrets/fileFallback.ts';
 
 export interface InitRunOpts {
   force?: boolean;
   noPrompt?: boolean;
+  advanced?: boolean;
   location?: string;
   answers?: Partial<InitAnswers>;
   input?: NodeJS.ReadableStream;
@@ -32,6 +36,117 @@ export interface InitRunOpts {
   skipModelPicker?: boolean;
   keyManager?: KeyManager;
   apiKey?: string;
+}
+
+/** Provider env var map — used to detect key in env during fast init. */
+const PROVIDER_ENV_VARS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  groq: 'GROQ_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
+};
+
+/**
+ * askFast — reduced 3-prompt init used by default (no --advanced flag).
+ * Q1: provider picker (6 items)
+ * Q2: API key (env auto-detect with override)
+ * Q3: language picker (2 items, skippable)
+ * All other fields → auto-defaults.
+ */
+async function askFast(io: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream }): Promise<{ answers: InitAnswers; envKey?: string }> {
+  const output = io.output ?? process.stdout;
+  const input = io.input ?? process.stdin;
+
+  // Q1: provider picker
+  const providerItems = [
+    { value: 'anthropic' as const, label: 'Anthropic (Claude)', hint: 'claude-sonnet-4-6' },
+    { value: 'openai' as const, label: 'OpenAI', hint: 'gpt-5.4-mini / gpt-4o' },
+    { value: 'groq' as const, label: 'Groq', hint: 'llama-3.3-70b (fast + free tier)' },
+    { value: 'deepseek' as const, label: 'DeepSeek', hint: 'deepseek-chat (cost-effective)' },
+    { value: 'ollama' as const, label: 'Ollama (local)', hint: 'no API key needed' },
+    { value: 'custom' as const, label: 'Custom / vLLM / LiteLLM', hint: 'enter base URL' },
+  ];
+
+  const providerResult = await pickOne('Choose your AI provider', providerItems, { default: 0 }, { input, output });
+  let provider: InitAnswers['provider'] = 'anthropic';
+  let baseUrl: string | undefined;
+
+  if (providerResult === 'skip') {
+    provider = 'anthropic';
+  } else if (typeof providerResult === 'object' && 'custom' in providerResult) {
+    provider = 'anthropic'; // fallback if somehow custom returned
+  } else if (providerResult === 'custom') {
+    // user chose custom — ask for URL then use openai-compat
+    output.write('  Base URL (e.g. http://localhost:8080/v1): ');
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input, output, terminal: false });
+    baseUrl = await new Promise<string>((resolve) => {
+      rl.question('', (ans: string) => { rl.close(); resolve(ans.trim()); });
+    });
+    provider = 'openai'; // openai-compat with custom baseUrl
+  } else {
+    provider = providerResult as InitAnswers['provider'];
+  }
+
+  // Q2: API key (skip for ollama)
+  let envKey: string | undefined;
+  if (provider !== 'ollama') {
+    const envVar = PROVIDER_ENV_VARS[provider];
+    const envVal = envVar ? process.env[envVar] : undefined;
+    if (envVal) {
+      output.write(`  Using ${envVar} from environment (press Enter to accept or type key): `);
+      const { createInterface } = await import('node:readline');
+      const rl = createInterface({ input, output, terminal: false });
+      const typed = await new Promise<string>((resolve) => {
+        rl.question('', (ans: string) => { rl.close(); resolve(ans.trim()); });
+      });
+      envKey = typed.length > 0 ? typed : envVal;
+    } else {
+      // No env var — prompt directly via keyPrompt
+      try {
+        envKey = await promptApiKey({
+          provider,
+          input: input as NodeJS.ReadStream,
+          output,
+        });
+      } catch (err) {
+        if (err instanceof NimbusError && err.context['reason'] === 'non_interactive') {
+          output.write(`  (non-interactive; run \`nimbus key set ${provider}\` later)\n`);
+        } else if (!(err instanceof NimbusError && err.context['reason'] === 'empty_key')) {
+          throw err;
+        }
+      }
+    }
+  }
+
+  // Q3: language picker (skippable, default English)
+  const langItems = [
+    { value: 'en' as const, label: 'English' },
+    { value: 'vi' as const, label: 'Tiếng Việt' },
+  ];
+  const langResult = await pickOne('Language', langItems, { default: 0, allowSkip: true }, { input, output });
+  const language: 'en' | 'vi' = (langResult === 'skip' || langResult === 'en') ? 'en'
+    : typeof langResult === 'string' ? langResult as 'en' | 'vi'
+    : 'en';
+
+  // Infer endpoint for non-anthropic providers
+  const endpoint = (provider === 'openai' || provider === 'groq' || provider === 'deepseek' || provider === 'ollama')
+    ? provider
+    : (baseUrl ? 'custom' : undefined);
+
+  const answers = InitAnswersSchema.parse({
+    workspaceName: 'personal',
+    primaryUseCase: 'daily assistant',
+    voice: 'casual',
+    language,
+    provider,
+    modelClass: 'workhorse',
+    bashPreset: 'balanced',
+    ...(endpoint !== undefined ? { endpoint } : {}),
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
+  });
+
+  return { answers, envKey };
 }
 
 function todayIso(): string {
@@ -103,7 +218,15 @@ export async function runInit(opts: InitRunOpts = {}): Promise<void> {
 
   write(`\n  nimbus init — create a new workspace\n\n`);
 
+  // v0.2.1: auto-provision vault passphrase BEFORE any key save attempt.
+  await autoProvisionPassphrase({
+    input: opts.input,
+    output: opts.output,
+  });
+
   let answers: InitAnswers;
+  let fastEnvKey: string | undefined;
+
   if (opts.noPrompt) {
     const merged = {
       workspaceName: 'personal',
@@ -116,11 +239,20 @@ export async function runInit(opts: InitRunOpts = {}): Promise<void> {
       ...opts.answers,
     };
     answers = InitAnswersSchema.parse(merged);
-  } else {
+  } else if (opts.advanced) {
+    // --advanced: preserve full 7-question wizard
     answers = await askAll({
       ...(opts.input ? { input: opts.input } : {}),
       ...(opts.output ? { output: opts.output } : {}),
     });
+  } else {
+    // Default fast path: 3 prompts only
+    const fast = await askFast({
+      ...(opts.input ? { input: opts.input } : {}),
+      ...(opts.output ? { output: opts.output } : {}),
+    });
+    answers = fast.answers;
+    fastEnvKey = fast.envKey;
   }
 
   if (opts.location) {
@@ -163,9 +295,11 @@ export async function runInit(opts: InitRunOpts = {}): Promise<void> {
   await switchWorkspace(meta.id);
 
   // SPEC-902 T4b: provider key step — skipped for ollama (local, keyless).
+  // Fast path: if key was collected during askFast(), pass it directly.
   let liveKey: string | undefined;
   if (!opts.skipKeyStep && answers.provider !== 'ollama') {
-    liveKey = await runKeyStep(answers, meta.id, opts, write);
+    const optsWithFastKey = fastEnvKey ? { ...opts, apiKey: fastEnvKey } : opts;
+    liveKey = await runKeyStep(answers, meta.id, optsWithFastKey, write);
   }
 
   // SPEC-903 T7: model discovery picker — post-key so fetchers can auth.
@@ -382,6 +516,9 @@ export async function quickInit(
   const write = (s: string): void => {
     (opts.output ?? process.stdout).write(s);
   };
+
+  // Auto-provision vault passphrase before saving any keys.
+  await autoProvisionPassphrase({ output: opts.output });
 
   const today = todayIso();
 
