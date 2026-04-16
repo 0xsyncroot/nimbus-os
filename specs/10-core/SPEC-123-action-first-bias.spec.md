@@ -1,5 +1,5 @@
 ---
-id: SPEC-119
+id: SPEC-123
 title: Action-first agent bias — default SOUL + AUTONOMY rewrite
 status: draft
 version: 0.1.0
@@ -103,4 +103,5 @@ No new types. Edits to:
 
 ## 10. Changelog
 
+- 2026-04-16 @hiepht: renumbered SPEC-119→SPEC-123 (collision with v0.1 audit-log-append-minimal)
 - 2026-04-16 @hiepht: draft — v0.3 analyst report (bias fix). Root cause: defensive SOUL Values + weak AUTONOMY_SECTION drowned by 3 following caution blocks + no anti-pattern examples. Claude Code's `src/constants/prompts.ts:892-898` is the authoritative reference.

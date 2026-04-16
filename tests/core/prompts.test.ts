@@ -109,8 +109,8 @@ describe('SPEC-105: prompt backbone', () => {
   });
 });
 
-// SPEC-119: action-first bias
-describe('SPEC-119: action-first bias', () => {
+// SPEC-123: action-first bias
+describe('SPEC-123: action-first bias', () => {
   test('AUTONOMY_SECTION contains "bias toward action"', () => {
     const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
       .map((b) => (b.type === 'text' ? b.text : ''))

@@ -33,6 +33,32 @@ const WORD_COUNT_WARN = 800;
 const WORD_COUNT_FAIL = 1500;
 
 /**
+ * Rule 11: validate the entire spec collection for duplicate IDs.
+ * Returns errors keyed to each file that carries a colliding ID.
+ */
+export function validateDuplicateIds(all: ParsedSpec[]): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const idMap = new Map<string, string[]>();
+  for (const spec of all) {
+    const paths = idMap.get(spec.frontmatter.id) ?? [];
+    paths.push(spec.path);
+    idMap.set(spec.frontmatter.id, paths);
+  }
+  for (const [id, paths] of idMap) {
+    if (paths.length > 1) {
+      for (const p of paths) {
+        errors.push({
+          rule: 11,
+          code: `SPEC_VALIDATION: duplicate id ${id} (also at ${paths.filter((x) => x !== p).join(', ')})`,
+          path: p,
+        });
+      }
+    }
+  }
+  return errors;
+}
+
+/**
  * Validate a single spec against all 10 rules.
  * `all` is required for cross-spec checks (rule 7: depends_on resolution + cycles).
  */

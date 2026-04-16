@@ -60,8 +60,8 @@ describe('SPEC-901: templates', () => {
   });
 });
 
-// SPEC-119: action-first bias — Values bullets use verbs, no gate patterns
-describe('SPEC-119: action-first Values in templates', () => {
+// SPEC-123: action-first bias — Values bullets use verbs, no gate patterns
+describe('SPEC-123: action-first Values in templates', () => {
   /** Extract lines in the # Values section (up to next # heading). */
   function extractValuesBullets(md: string): string[] {
     const lines = md.split('\n');

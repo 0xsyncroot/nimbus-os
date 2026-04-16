@@ -1,7 +1,7 @@
 // cli.ts — `nimbus spec ...` subcommand dispatcher (SPEC-911 T5+T6)
 
 import { parseSpec, type ParsedSpec } from './parser.ts';
-import { validateSpec, getWarnings, type ValidationError } from './validator.ts';
+import { validateSpec, getWarnings, validateDuplicateIds, type ValidationError } from './validator.ts';
 import { buildIndex, writeIndex } from './indexer.ts';
 import { resolveLinks } from './links.ts';
 import { Glob } from 'bun';
@@ -138,10 +138,20 @@ async function cmdValidate(args: string[]): Promise<number> {
     return 2;
   }
 
+  // Rule 11: batch duplicate-ID check across the entire collection (not per-target)
+  const dupeErrors = validateDuplicateIds(all);
+  // Build a map so we can attach dupe errors to the right target
+  const dupeByPath = new Map<string, ValidationError[]>();
+  for (const e of dupeErrors) {
+    const list = dupeByPath.get(e.path) ?? [];
+    list.push(e);
+    dupeByPath.set(e.path, list);
+  }
+
   let totalErrors = 0;
   let totalWarnings = 0;
   for (const spec of targets) {
-    const errors = validateSpec(spec, all);
+    const errors = [...validateSpec(spec, all), ...(dupeByPath.get(spec.path) ?? [])];
     const warnings = getWarnings(spec);
     if (errors.length === 0 && warnings.length === 0) {
       console.log(`✓ ${spec.frontmatter.id}  ${spec.path}`);
