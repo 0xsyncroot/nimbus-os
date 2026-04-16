@@ -1,37 +1,19 @@
-// server.ts — SPEC-805 T4: Bun.serve HTTP + WebSocket channel adapter.
-// Default bind: 127.0.0.1:7432. Remote bind requires TLS config.
-// Routes: POST /api/v1/messages, GET /api/v1/health, WS /api/v1/stream
-// POST /api/v1/pair/start, POST /api/v1/pair/redeem
+// server.ts — SPEC-805 loopback RPC adapter.
+// Binds exclusively to 127.0.0.1 (refuses remote bind).
+// Routes: POST /api/v1/messages, GET /api/v1/health
+// Auth: bearer token (nmbt_<base64url>) per workspace, stored in SPEC-152 vault.
 
 import { createServer as netCreateServer } from 'node:net';
-import type { Server, ServerWebSocket } from 'bun';
+import type { Server } from 'bun';
 import type { ChannelAdapter } from '../ChannelAdapter.ts';
 import type { ChannelManager } from '../ChannelManager.ts';
-import {
-  verifyBearer,
-  isIpBanned,
-  recordFailedAuth,
-  loadBearerToken,
-  maskToken,
-} from './auth.ts';
-import {
-  handleWsOpen,
-  handleWsClose,
-  handleWsMessage,
-  validateWsUpgrade,
-  closeAllWsConnections,
-  type WsData,
-} from './wsStream.ts';
-import { createPairingSession, redeemPairingCode, renderPairingQr } from './pairing.ts';
+import { verifyBearer, loadBearerToken, maskToken } from './auth.ts';
 import { logger } from '../../observability/logger.ts';
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
 
 export interface HttpChannelConfig {
   port?: number;
   bindAddress?: string;
-  tlsCert?: string;
-  tlsKey?: string;
-  trustedProxy?: boolean;
 }
 
 /** Extended adapter returned by createHttpChannel — exposes the OS-assigned port.
@@ -42,6 +24,7 @@ export interface HttpChannelAdapter extends ChannelAdapter {
 
 const DEFAULT_PORT = 7432;
 const DEFAULT_BIND = '127.0.0.1';
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 /**
  * Ask the OS for a free port by binding a net server to port 0, recording the
@@ -64,14 +47,6 @@ function pickFreePort(hostname: string): Promise<number> {
   });
 }
 
-function extractIp(req: Request, trustedProxy: boolean): string {
-  if (trustedProxy) {
-    const xff = req.headers.get('X-Forwarded-For');
-    if (xff) return xff.split(',')[0]?.trim() ?? '0.0.0.0';
-  }
-  return req.headers.get('X-Real-IP') ?? '0.0.0.0';
-}
-
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -79,14 +54,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-async function requireBearer(
-  req: Request,
-  ip: string,
-  workspaceId: string,
-): Promise<Response | null> {
-  if (isIpBanned(ip)) {
-    return jsonResponse({ error: 'IP banned' }, 429);
-  }
+async function requireBearer(req: Request, workspaceId: string): Promise<Response | null> {
   const auth = req.headers.get('Authorization');
   if (!auth?.startsWith('Bearer ')) {
     return jsonResponse({ error: 'Missing Authorization header' }, 401);
@@ -94,11 +62,8 @@ async function requireBearer(
   const token = auth.slice('Bearer '.length).trim();
   const valid = await verifyBearer(token, workspaceId);
   if (!valid) {
-    const { banned } = recordFailedAuth(ip);
-    logger.warn({ ip, token: maskToken(token), workspaceId }, 'http auth rejected');
-    return banned
-      ? jsonResponse({ error: 'IP banned due to excessive failures' }, 429)
-      : jsonResponse({ error: 'Invalid bearer token' }, 401);
+    logger.warn({ token: maskToken(token), workspaceId }, 'http auth rejected');
+    return jsonResponse({ error: 'Invalid bearer token' }, 401);
   }
   return null; // auth OK
 }
@@ -110,27 +75,21 @@ export function createHttpChannel(
 ): HttpChannelAdapter {
   const port = cfg.port ?? DEFAULT_PORT;
   const bind = cfg.bindAddress ?? DEFAULT_BIND;
-  let boundPort = port;
-  const isRemote = bind !== '127.0.0.1' && bind !== 'localhost' && bind !== '::1';
 
-  if (isRemote && (!cfg.tlsCert || !cfg.tlsKey)) {
+  if (!LOOPBACK_ADDRS.has(bind)) {
     throw new NimbusError(ErrorCode.X_NETWORK_BLOCKED, {
-      reason: 'remote_bind_requires_tls',
+      reason: 'remote_bind_not_allowed',
       bind,
+      note: 'nimbus HTTP channel is loopback-only; remote access out-of-scope until v0.4+',
     });
   }
 
+  let boundPort = port;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let server: Server<any> | null = null;
 
-  async function resolveWorkspaceForToken(token: string): Promise<string | null> {
-    const ok = await verifyBearer(token, workspaceId);
-    return ok ? workspaceId : null;
-  }
-
   async function handleRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const ip = extractIp(req, cfg.trustedProxy ?? false);
     const path = url.pathname;
 
     // Health check — no auth required.
@@ -138,35 +97,11 @@ export function createHttpChannel(
       return jsonResponse({ status: 'ok', workspaceId, ts: Date.now() });
     }
 
-    // Pairing endpoints — no auth required.
-    if (req.method === 'POST' && path === '/api/v1/pair/start') {
-      const session = await createPairingSession(workspaceId);
-      renderPairingQr(session.code, port);
-      return jsonResponse({ expiresAt: session.expiresAt, ttlMs: session.expiresAt - Date.now() });
-    }
-
-    if (req.method === 'POST' && path === '/api/v1/pair/redeem') {
-      let body: { code?: unknown };
-      try {
-        body = (await req.json()) as { code?: unknown };
-      } catch {
-        return jsonResponse({ error: 'Invalid JSON' }, 400);
-      }
-      if (typeof body.code !== 'string') {
-        return jsonResponse({ error: 'code required' }, 400);
-      }
-      const token = await redeemPairingCode(body.code);
-      if (!token) {
-        return jsonResponse({ error: 'Invalid or expired pairing code' }, 401);
-      }
-      return jsonResponse({ token: maskToken(token), workspaceId });
-    }
-
     // Authenticated routes.
-    const authErr = await requireBearer(req, ip, workspaceId);
+    const authErr = await requireBearer(req, workspaceId);
     if (authErr) return authErr;
 
-    // POST /api/v1/messages — send a message, receive full response JSON.
+    // POST /api/v1/messages — send a message, receive acknowledgement JSON.
     if (req.method === 'POST' && path === '/api/v1/messages') {
       let body: { text?: unknown; userId?: unknown };
       try {
@@ -188,72 +123,18 @@ export function createHttpChannel(
       return jsonResponse({ ok: true, queued: true });
     }
 
-    // GET /api/v1/cost — placeholder for v0.3.
-    if (req.method === 'GET' && path === '/api/v1/cost') {
-      return jsonResponse({ cost: null, note: 'cost tracking available in v0.3.1' });
-    }
-
-    // GET /api/v1/sessions — placeholder.
-    if (req.method === 'GET' && path === '/api/v1/sessions') {
-      return jsonResponse({ sessions: [] });
-    }
-
     return jsonResponse({ error: 'Not found' }, 404);
   }
 
-  const wsHandlers = {
-    open(ws: ServerWebSocket<WsData>) {
-      handleWsOpen(ws);
-    },
-    close(ws: ServerWebSocket<WsData>) {
-      handleWsClose(ws);
-    },
-    message(ws: ServerWebSocket<WsData>, message: string | Buffer) {
-      handleWsMessage(ws, message);
-      // Forward inbound WS messages to ChannelManager.
-      const text: string = message instanceof Buffer ? message.toString('utf8') : (message as string);
-      channelManager.publishInbound({
-        adapterId: 'http-ws',
-        workspaceId: ws.data.workspaceId,
-        userId: 'ws-user',
-        text,
-        raw: message,
-      });
-    },
-  };
-
   async function start(): Promise<void> {
-    const tlsOpts =
-      cfg.tlsCert && cfg.tlsKey
-        ? { tls: { cert: Bun.file(cfg.tlsCert), key: Bun.file(cfg.tlsKey) } }
-        : {};
-
     // When port === 0 (ephemeral, used in tests), pre-allocate via node:net to
     // work around a Bun/macOS bug where Bun.serve({ port: 0 }).port stays 0.
     const listenPort = port === 0 ? await pickFreePort(bind) : port;
 
-    server = Bun.serve<WsData>({
+    server = Bun.serve({
       hostname: bind,
       port: listenPort,
-      ...tlsOpts,
-      async fetch(req, bunServer) {
-        // WebSocket upgrade for /api/v1/stream.
-        const url = new URL(req.url);
-        if (url.pathname === '/api/v1/stream') {
-          const ip = bunServer.requestIP(req)?.address ?? extractIp(req, cfg.trustedProxy ?? false);
-          const result = await validateWsUpgrade(req, resolveWorkspaceForToken, ip);
-          if (!result.ok) {
-            return jsonResponse({ error: result.message }, result.status);
-          }
-          const upgraded = bunServer.upgrade(req, {
-            data: { workspaceId: result.workspaceId, remoteIp: ip, tokenHint: maskToken(result.token) } satisfies WsData,
-          });
-          if (!upgraded) return jsonResponse({ error: 'Upgrade failed' }, 500);
-          return undefined as unknown as Response;
-        }
-        return handleRequest(req);
-      },
-      websocket: wsHandlers,
+      fetch: handleRequest,
     });
 
     // Capture the actual bound port.  Prefer server.port / server.url.port when
@@ -264,25 +145,20 @@ export function createHttpChannel(
       (rawPort > 0 ? rawPort : null) ??
       (Number.isFinite(urlPort) && urlPort > 0 ? urlPort : null) ??
       listenPort;
-    logger.info(
-      { bind, port: boundPort, rawServerPort: server.port, serverUrl: server.url?.href },
-      'HTTP/WS channel started',
-    );
+    logger.info({ bind, port: boundPort }, 'HTTP channel started');
   }
 
   async function stop(): Promise<void> {
-    closeAllWsConnections(1001, 'server stopping');
     if (server) {
-      await server.stop(true); // true = close idle connections immediately
+      await server.stop(true);
     }
     server = null;
-    logger.info({ bind, port: boundPort }, 'HTTP/WS channel stopped');
+    logger.info({ bind, port: boundPort }, 'HTTP channel stopped');
   }
 
-  async function send(_wid: string, text: string): Promise<void> {
-    // Broadcast to all open WS connections for this workspace.
-    const { broadcastToWorkspace } = await import('./wsStream.ts');
-    broadcastToWorkspace(workspaceId, { type: 'message', text, ts: Date.now() });
+  async function send(_wid: string, _text: string): Promise<void> {
+    // HTTP channel is request/response only; outbound push not supported.
+    logger.debug({ workspaceId }, 'http channel send() is a no-op (loopback RPC only)');
   }
 
   return {
@@ -296,3 +172,6 @@ export function createHttpChannel(
     send,
   };
 }
+
+// Exported for test-only: verify a bearer token is stored for a workspace.
+export { loadBearerToken };

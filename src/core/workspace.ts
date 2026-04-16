@@ -1,4 +1,5 @@
 // workspace.ts — SPEC-101 lifecycle wrapper: create/switch/getActive on top of workspaceStore.
+// SPEC-823 T3: additive lastBootAt + numStartups persistence.
 
 import { join } from 'node:path';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -8,6 +9,7 @@ import {
   createWorkspaceDir,
   listWorkspaces,
   loadWorkspace,
+  updateWorkspace,
 } from '../storage/workspaceStore.ts';
 import type { Workspace } from './workspaceTypes.ts';
 
@@ -65,4 +67,17 @@ export async function getActiveWorkspace(): Promise<Workspace | null> {
 
 export async function listAllWorkspaces(): Promise<Workspace[]> {
   return listWorkspaces();
+}
+
+/**
+ * SPEC-823 T3 — persist lastBootAt + numStartups in workspace.json on each REPL boot.
+ * Returns the updated workspace meta so callers can pass it to renderWelcome.
+ */
+export async function persistBootMeta(wsId: string): Promise<Workspace> {
+  const { meta } = await loadWorkspace(wsId);
+  const patch: Partial<Workspace> = {
+    lastBootAt: Math.floor(Date.now() / 1000),
+    numStartups: (meta.numStartups ?? 0) + 1,
+  };
+  return updateWorkspace(wsId, patch);
 }

@@ -31,6 +31,16 @@ export const TOPICS = Object.freeze({
   security: {
     event: 'security.event',
   },
+  shell: {
+    stdoutLine: 'shell.stdout_line',
+    stderrLine: 'shell.stderr_line',
+    exit: 'shell.exit',
+    bufferOverflow: 'shell.buffer_overflow',
+  },
+  plan: {
+    proposed: 'plan.proposed',
+    decision: 'plan.decision',
+  },
 } as const);
 
 export type SessionEvent =
@@ -92,6 +102,28 @@ export type SecurityEvent = {
   ts: number;
 };
 
+export type ShellEvent =
+  | { type: 'shell.stdout_line'; taskId: string; line: string; ts: number }
+  | { type: 'shell.stderr_line'; taskId: string; line: string; ts: number }
+  | { type: 'shell.exit'; taskId: string; exitCode: number; ts: number }
+  | { type: 'shell.buffer_overflow'; taskId: string; droppedLines: number };
+
+/** SPEC-133: plan mode events — emitted by ExitPlanMode tool. */
+export type PlanProposedEvent = {
+  type: 'plan.proposed';
+  plan: string;
+  turnId: string;
+  sessionId: string;
+  ts: number;
+};
+
+export type PlanDecisionEvent = {
+  type: 'plan.decision';
+  decision: 'approve' | 'reject' | 'refine';
+  refineHint?: string;
+  targetMode?: 'default' | 'acceptEdits';
+};
+
 const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.session.userMsg,
   TOPICS.session.assistantMsg,
@@ -111,6 +143,12 @@ const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.bus.subscriberError,
   TOPICS.channel.inbound,
   TOPICS.security.event,
+  TOPICS.shell.stdoutLine,
+  TOPICS.shell.stderrLine,
+  TOPICS.shell.exit,
+  TOPICS.shell.bufferOverflow,
+  TOPICS.plan.proposed,
+  TOPICS.plan.decision,
 ]);
 
 export function isRegisteredTopic(topic: string): boolean {

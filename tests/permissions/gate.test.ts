@@ -133,7 +133,8 @@ describe('SPEC-401: gate — bypass mode', () => {
 });
 
 describe('SPEC-401: gate — v0.2 stub modes', () => {
-  for (const mode of ['plan', 'auto', 'isolated'] as const) {
+  // 'auto' replaced by 'acceptEdits' (SPEC-404); 'plan' now implemented (SPEC-133).
+  for (const mode of ['isolated'] as const) {
     test(`${mode} throws U_MISSING_CONFIG`, async () => {
       const gate = createGate({ rules: compileRules([]), audit: noopAudit });
       try {

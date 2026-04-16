@@ -1,12 +1,13 @@
-// colors.ts — SPEC-801 T1 + SPEC-822 T7: ANSI color helpers with NO_COLOR + TTY detection.
+// colors.ts — SPEC-801 T1 + SPEC-822 T7 + SPEC-823 T1: ANSI color helpers with NO_COLOR + TTY detection.
 
 const ESC = '\x1b[';
 
 type ColorFn = (s: string) => string;
 
-function isColorEnabled(): boolean {
+export function isColorEnabled(): boolean {
   if (process.env['NO_COLOR'] !== undefined && process.env['NO_COLOR'] !== '') return false;
   if (process.env['FORCE_COLOR'] !== undefined && process.env['FORCE_COLOR'] !== '') return true;
+  if (process.env['TERM'] === 'dumb') return false;
   if (typeof process.stdout.isTTY === 'boolean') return process.stdout.isTTY;
   return false;
 }
@@ -42,6 +43,27 @@ export function stripAnsi(s: string): string {
 export function colorEnabled(): boolean {
   return isColorEnabled();
 }
+
+// ---------------------------------------------------------------------------
+// SPEC-823 T1 — Earth-brown palette (nâu đất) for nimbus welcome screen.
+// All constants resolve to '' when isColorEnabled() returns false, covering
+// NO_COLOR, TERM=dumb, and non-TTY environments.
+// ---------------------------------------------------------------------------
+
+function earthColor(code: string): string {
+  return isColorEnabled() ? `\x1b[${code}m` : '';
+}
+
+/** Deep earth brown — xterm-256 #94 */
+export function EARTH_DEEP(): string { return earthColor('38;5;94'); }
+/** Light earth/tan — xterm-256 #180 */
+export function EARTH_LIGHT(): string { return earthColor('38;5;180'); }
+/** Dim/muted brown — xterm-256 #58 */
+export function EARTH_DIM(): string { return earthColor('38;5;58'); }
+/** Gold/amber accent — xterm-256 #136 */
+export function EARTH_GOLD(): string { return earthColor('38;5;136'); }
+/** Bark/dark brown — xterm-256 #130 */
+export function EARTH_BARK(): string { return earthColor('38;5;130'); }
 
 // ---------------------------------------------------------------------------
 // SPEC-822 T7 — Slash UI polish constants (reusable across slash + markdown)

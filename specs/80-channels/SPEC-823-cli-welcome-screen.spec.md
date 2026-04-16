@@ -1,7 +1,7 @@
 ---
 id: SPEC-823
 title: CLI welcome screen with earth-brown theme
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16

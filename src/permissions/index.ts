@@ -5,6 +5,8 @@ export {
   assertImplemented,
   isValidTransition,
   getModeDescriptor,
+  parseMode,
+  narrow,
   READONLY_ALLOWED_TOOLS,
   DESTRUCTIVE_TOOLS,
   IMPLEMENTED_MODES,
@@ -16,4 +18,4 @@ export { matchRule, matchPattern, ruleKey, extractMatchTarget, pickWinner } from
 export { validatePath, inspectPath, getSensitivePatterns, __resetPathValidatorCache } from './pathValidator.ts';
 export { createGate } from './gate.ts';
 export type { Gate, GateOptions } from './gate.ts';
-export type { PermissionContext, ToolInvocation } from './types.ts';
+export type { PermissionContext, ToolInvocation, SideEffectTier } from './types.ts';

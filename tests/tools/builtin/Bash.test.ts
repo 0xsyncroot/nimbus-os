@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBashTool } from '../../../src/tools/builtin/Bash.ts';
+import { createBashTool, type BashOutput } from '../../../src/tools/builtin/Bash.ts';
 import { __resetPathValidatorCache } from '../../../src/permissions/pathValidator.ts';
 import { ErrorCode } from '../../../src/observability/errors.ts';
 import { ctxStub } from '../helpers.ts';
@@ -31,8 +31,9 @@ describe('SPEC-303: Bash tool', () => {
     const res = await tool.handler({ command: 'echo hello', timeoutMs: 5000 }, ctxStub({ cwd: root }));
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.output.exitCode).toBe(0);
-      expect(res.output.stdout).toContain('hello');
+      const out = res.output as BashOutput;
+      expect(out.exitCode).toBe(0);
+      expect(out.stdout).toContain('hello');
     }
   });
 
@@ -58,8 +59,9 @@ describe('SPEC-303: Bash tool', () => {
     }, ctxStub({ cwd: root }));
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.output.stdout).toContain('***redacted***');
-      expect(res.output.stdout).not.toContain('sk-ant-api03-ABCD');
+      const out = res.output as BashOutput;
+      expect(out.stdout).toContain('***redacted***');
+      expect(out.stdout).not.toContain('sk-ant-api03-ABCD');
     }
   });
 

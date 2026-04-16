@@ -109,6 +109,50 @@ describe('SPEC-105: prompt backbone', () => {
   });
 });
 
+// SPEC-124: credential-handling section
+describe('SPEC-124: credential handling prompt section', () => {
+  test('buildSystemPrompt contains [CREDENTIAL_HANDLING] header', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    expect(text).toContain('[CREDENTIAL_HANDLING]');
+  });
+
+  test('CREDENTIAL_HANDLING contains anti-pattern fence', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    expect(text).toContain('Anti-pattern');
+    expect(text).toContain('Do NOT produce');
+  });
+
+  test('CREDENTIAL_HANDLING contains "save to vault" instruction', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    expect(text).toContain('vault');
+    expect(text).toContain('configuration intent');
+  });
+
+  test('CREDENTIAL_HANDLING placed after AUTONOMY and before SAFETY', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    const idxAutonomy = text.indexOf('[AUTONOMY]');
+    const idxCred = text.indexOf('[CREDENTIAL_HANDLING]');
+    const idxSafety = text.indexOf('[SAFETY]');
+    expect(idxAutonomy).toBeLessThan(idxCred);
+    expect(idxCred).toBeLessThan(idxSafety);
+  });
+
+  test('uses placeholder token shape (no real tokens)', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    expect(text).toContain('NNNNNNNNNN:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
+  });
+});
+
 // SPEC-123: action-first bias
 describe('SPEC-123: action-first bias', () => {
   test('AUTONOMY_SECTION contains "bias toward action"', () => {
@@ -140,6 +184,34 @@ describe('SPEC-123: action-first bias', () => {
       '[MEMORY]',
       '[TOOLS_AVAILABLE]',
     ].map((tag) => text.indexOf(tag));
+    for (let i = 0; i < positions.length - 1; i++) {
+      expect(positions[i]).toBeGreaterThanOrEqual(0);
+      expect(positions[i]!).toBeLessThan(positions[i + 1]!);
+    }
+  });
+
+  // SPEC-124: full injection order including SESSION_PREFS + CREDENTIAL_HANDLING
+  test('injection order: SOUL → IDENTITY → SESSION_PREFS → AUTONOMY → CREDENTIAL_HANDLING → SAFETY → UNTRUSTED_CONTENT → TOOL_USAGE → MEMORY → TOOLS_AVAILABLE', () => {
+    const text = buildSystemPrompt({
+      memory: FIX_MEMORY(true),
+      caps: CAPS_EXPLICIT,
+      sessionPrefs: { agentName: 'Nimbus' },
+    })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    const tags = [
+      '[SOUL]',
+      '[IDENTITY]',
+      '[SESSION_PREFS]',
+      '[AUTONOMY]',
+      '[CREDENTIAL_HANDLING]',
+      '[SAFETY]',
+      '[UNTRUSTED_CONTENT]',
+      '[TOOL_USAGE]',
+      '[MEMORY]',
+      '[TOOLS_AVAILABLE]',
+    ];
+    const positions = tags.map((tag) => text.indexOf(tag));
     for (let i = 0; i < positions.length - 1; i++) {
       expect(positions[i]).toBeGreaterThanOrEqual(0);
       expect(positions[i]!).toBeLessThan(positions[i + 1]!);

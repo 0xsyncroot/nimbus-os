@@ -16,7 +16,7 @@ export interface LoopAdapterOptions {
   workspaceId: string;
   sessionId: string;
   cwd: string;
-  mode: 'default' | 'readonly' | 'bypass';
+  mode: 'default' | 'readonly' | 'acceptEdits' | 'bypass' | 'plan';
   readConcurrency?: number;
 }
 

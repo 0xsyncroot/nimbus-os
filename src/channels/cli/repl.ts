@@ -14,6 +14,8 @@ import type { TurnContext } from '../../core/turn.ts';
 import { createDefaultRegistry, createLoopAdapter, type ToolRegistry } from '../../tools/index.ts';
 import { createGate, compileRules, type Gate } from '../../permissions/index.ts';
 import { colors, prefixes } from './colors.ts';
+import { renderWelcome } from './welcome.ts';
+import { persistBootMeta } from '../../core/workspace.ts';
 import { createRenderer } from './render.ts';
 import {
   dispatchSlash,
@@ -42,7 +44,7 @@ interface ReplState {
   providerKind: 'anthropic' | 'openai-compat';
   endpoint: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom' | undefined;
   baseUrl: string | undefined;
-  mode: 'readonly' | 'default' | 'bypass';
+  mode: 'readonly' | 'default' | 'acceptEdits' | 'bypass';
   running: boolean;
   turnAbort: ReturnType<typeof createTurnAbort> | null;
   lastCtrlCAt: number;
@@ -196,8 +198,28 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 
   const unwireBus = wireBusSubscribers({ workspaceId: state.wsId, channel: 'cli' });
 
-  write(`${colors.ok(prefixes.ok)} nimbus ready — workspace "${state.wsName}" (${state.model})\n`);
-  write(`${colors.dim('Type /help for commands, Ctrl-C twice to exit.')}\n`);
+  // SPEC-823 T4 — persist boot meta, then render welcome screen
+  let bootedMeta = loaded.meta;
+  try {
+    bootedMeta = await persistBootMeta(state.wsId);
+  } catch {
+    // non-fatal: welcome still renders with defaults
+  }
+  const welcomeCols = (output as NodeJS.WriteStream).columns ?? 80;
+  const welcomeIsTTY = (output as NodeJS.WriteStream).isTTY === true;
+  const welcomeNoColor = process.env['NO_COLOR'] !== undefined && process.env['NO_COLOR'] !== '';
+  const welcome = renderWelcome({
+    wsName: state.wsName,
+    model: state.model,
+    providerKind: state.providerKind,
+    endpoint: state.endpoint,
+    lastBootAt: bootedMeta.lastBootAt,
+    numStartups: bootedMeta.numStartups,
+    cols: welcomeCols,
+    isTTY: welcomeIsTTY,
+    noColor: welcomeNoColor,
+  });
+  write(`${welcome}\n`);
 
   const rl = createInterface({ input, output, terminal: true });
 

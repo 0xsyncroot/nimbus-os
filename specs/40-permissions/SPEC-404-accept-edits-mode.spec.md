@@ -1,8 +1,8 @@
 ---
 id: SPEC-404
 title: acceptEdits mode — auto-allow write-tier tools
-status: draft
-version: 0.1.0
+status: approved
+version: 0.1.1
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
@@ -14,8 +14,13 @@ estimated_loc: 90
 files_touched:
   - src/permissions/mode.ts
   - src/permissions/gate.ts
+  - src/permissions/types.ts
+  - src/permissions/index.ts
   - src/channels/cli/slashCommands.ts
+  - src/channels/cli/repl.ts
+  - src/tools/loopAdapter.ts
   - tests/permissions/acceptEdits.test.ts
+  - tests/permissions/gate.test.ts
 ---
 
 # acceptEdits Mode — Auto-Allow Write-Tier Tools

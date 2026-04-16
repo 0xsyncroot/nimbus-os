@@ -4,7 +4,7 @@ import type { CanonicalChunk, Provider } from '../ir/types.ts';
 import type { TurnAbort } from './cancellation.ts';
 
 export type ChannelKind = 'cli' | 'http' | 'ws' | 'telegram' | 'slack';
-export type AgentMode = 'readonly' | 'default' | 'bypass';
+export type AgentMode = 'readonly' | 'default' | 'bypass' | 'plan' | 'acceptEdits';
 
 export interface TurnContext {
   sessionId: string;

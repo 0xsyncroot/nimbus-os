@@ -10,8 +10,8 @@ import {
 export interface ReplContext {
   wsId: string;
   write(line: string): void;
-  setMode?: (mode: 'readonly' | 'default' | 'bypass') => void;
-  currentMode?: () => 'readonly' | 'default' | 'bypass';
+  setMode?: (mode: 'readonly' | 'default' | 'acceptEdits' | 'bypass') => void;
+  currentMode?: () => 'readonly' | 'default' | 'acceptEdits' | 'bypass';
   cancelTurn?: () => void;
   quit?: () => void;
   newSession?: () => Promise<void>;
@@ -121,19 +121,21 @@ export function registerDefaultCommands(): void {
   });
   registerSlash({
     name: 'mode',
-    description: 'Get/set permission mode (readonly|default|bypass)',
-    usage: '/mode [readonly|default|bypass]',
+    description: 'Get/set permission mode (readonly|default|acceptEdits|bypass)',
+    usage: '/mode [readonly|default|acceptEdits|auto|bypass]',
     category: 'system',
-    argHint: '[readonly|default|bypass]',
-    argChoices: ['readonly', 'default', 'bypass'],
+    argHint: '[readonly|default|acceptEdits|bypass]',
+    argChoices: ['readonly', 'default', 'acceptEdits', 'bypass'],
     handler: (args, ctx) => {
-      const v = args.trim();
-      if (v === '') {
+      const raw = args.trim();
+      if (raw === '') {
         ctx.write(`mode: ${ctx.currentMode?.() ?? 'default'}`);
         return;
       }
-      if (v !== 'readonly' && v !== 'default' && v !== 'bypass') {
-        ctx.write('usage: /mode <readonly|default|bypass>');
+      // SPEC-404: 'auto' is an alias for 'acceptEdits'.
+      const v = raw === 'auto' ? 'acceptEdits' : raw;
+      if (v !== 'readonly' && v !== 'default' && v !== 'acceptEdits' && v !== 'bypass') {
+        ctx.write('usage: /mode <readonly|default|acceptEdits|bypass>');
         return;
       }
       if (v === 'bypass') {
@@ -141,6 +143,9 @@ export function registerDefaultCommands(): void {
         return;
       }
       ctx.setMode?.(v);
+      if (raw === 'auto') {
+        ctx.write('mode set to acceptEdits (auto alias)');
+      }
     },
   });
   registerSlash({

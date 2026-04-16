@@ -1,12 +1,17 @@
-// gate.ts — SPEC-401: canUseTool entry point. Routes per-mode through
+// gate.ts — SPEC-401/404: canUseTool entry point. Routes per-mode through
 // rule matcher + path validator + session cache.
+// SPEC-133: plan mode whitelist enforcement + security event emission.
+// SPEC-404: acceptEdits fast-path — sideEffects:'write' auto-allow; exec falls through.
 
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { computeAndAppend } from '../observability/auditLog.ts';
 import { logger } from '../observability/logger.ts';
+import { getGlobalBus } from '../core/events.ts';
+import { TOPICS } from '../core/eventTypes.ts';
 import {
   assertImplemented,
   DESTRUCTIVE_TOOLS,
+  isAllowedInPlanMode,
   READONLY_ALLOWED_TOOLS,
   type PermissionMode,
 } from './mode.ts';
@@ -95,8 +100,38 @@ export function createGate(opts: GateOptions): Gate {
       throw pathCheck.error;
     }
 
-    // 3. Mode-specific decision.
-    const decision = decideByMode(inv, ctx, opts.rules, env, bypassCliFlag, cacheFor(ctx.sessionId));
+    // 3. Mode-specific decision. Plan mode throws on violation — catch to audit + re-throw.
+    let decision: Decision;
+    try {
+      decision = decideByMode(inv, ctx, opts.rules, env, bypassCliFlag, cacheFor(ctx.sessionId));
+    } catch (err) {
+      // SPEC-133: plan mode violation → audit + security event + re-throw.
+      if (
+        err instanceof NimbusError &&
+        err.code === ErrorCode.T_PERMISSION &&
+        ctx.mode === 'plan'
+      ) {
+        auditAsync(audit, {
+          sessionId: ctx.sessionId,
+          toolName: inv.name,
+          toolInput: inv.input,
+          outcome: 'denied',
+          decisionReason: `plan_mode_whitelist`,
+        });
+        try {
+          getGlobalBus().publish(TOPICS.security.event, {
+            type: TOPICS.security.event,
+            adapterId: ctx.sessionId,
+            reason: `plan_mode_blocked:${inv.name}`,
+            userId: ctx.workspaceId,
+            ts: Date.now(),
+          });
+        } catch {
+          // security event publish must not fail the gate
+        }
+      }
+      throw err;
+    }
 
     // 4. Audit critical outcomes.
     if (decision === 'deny') {
@@ -158,7 +193,28 @@ function decideByMode(
     return 'deny';
   }
 
-  // default mode: consult rules.
+  // SPEC-133: plan mode — only whitelist allowed; all others denied.
+  if (mode === 'plan') {
+    if (isAllowedInPlanMode(inv.name)) return 'allow';
+    // Non-whitelisted tool in plan mode → deny with hint.
+    throw new NimbusError(ErrorCode.T_PERMISSION, {
+      tool: inv.name,
+      reason: 'plan_mode_whitelist',
+      hint: 'Exit plan mode first',
+      mode,
+    });
+  }
+
+  // SPEC-404: acceptEdits mode — write-tier auto-allow; exec falls through to default rules.
+  if (mode === 'acceptEdits') {
+    const tier = inv.sideEffects;
+    if (tier === 'write') return 'allow';
+    // pure/read: already allowed in default — also allow here.
+    if (tier === 'pure' || tier === 'read') return 'allow';
+    // exec (Bash/pwsh) and unknown: fall through to rule matching below.
+  }
+
+  // default mode (and acceptEdits exec-tier fallthrough): consult rules.
   const ruleDecision = matchRule(rules, inv);
   if (ruleDecision !== 'no-match') {
     if (ruleDecision === 'ask') {

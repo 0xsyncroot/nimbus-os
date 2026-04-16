@@ -14,6 +14,9 @@ export const WorkspaceSchema = z.object({
   defaultModel: z.string().default('claude-sonnet-4-6'),
   defaultEndpoint: z.enum(['openai', 'groq', 'deepseek', 'ollama', 'custom']).optional(),
   defaultBaseUrl: z.string().url().optional(),
+  // SPEC-823 T3 — additive boot-tracking fields; no migration required
+  lastBootAt: z.number().int().nonnegative().optional(),
+  numStartups: z.number().int().nonnegative().optional(),
 }).superRefine((val, ctx) => {
   if (val.defaultEndpoint === 'custom' && !val.defaultBaseUrl) {
     ctx.addIssue({

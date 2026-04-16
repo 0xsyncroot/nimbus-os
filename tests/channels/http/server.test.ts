@@ -5,9 +5,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import { createHttpChannel, type HttpChannelAdapter } from '../../../src/channels/http/server.ts';
 import { createChannelManager } from '../../../src/channels/ChannelManager.ts';
 import { createEventBus, __resetGlobalBus } from '../../../src/core/events.ts';
-import { generateBearerToken, storeBearerToken, __resetIpMap } from '../../../src/channels/http/auth.ts';
-import { __resetWsConnections } from '../../../src/channels/http/wsStream.ts';
-import { __resetPairingSessions } from '../../../src/channels/http/pairing.ts';
+import { generateBearerToken, storeBearerToken } from '../../../src/channels/http/auth.ts';
 import { __resetSecretStoreCache } from '../../../src/platform/secrets/index.ts';
 import { __resetFileFallbackKey } from '../../../src/platform/secrets/fileFallback.ts';
 import { TOPICS } from '../../../src/core/eventTypes.ts';
@@ -26,9 +24,6 @@ beforeEach(async () => {
   process.env['NIMBUS_HOME'] = OVERRIDE;
   process.env['NIMBUS_SECRETS_BACKEND'] = 'file';
   await mkdir(OVERRIDE, { recursive: true });
-  __resetIpMap();
-  __resetWsConnections();
-  __resetPairingSessions();
   __resetGlobalBus();
   __resetSecretStoreCache();
   __resetFileFallbackKey();
@@ -52,7 +47,7 @@ async function startServer(workspaceId: string, token: string) {
   return { channel: channel as HttpChannelAdapter, bus, mgr };
 }
 
-describe('SPEC-805: HTTP server', () => {
+describe('SPEC-805: HTTP server — health', () => {
   test('GET /api/v1/health returns 200 without auth', async () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-health', token);
@@ -65,7 +60,9 @@ describe('SPEC-805: HTTP server', () => {
       await channel.stop();
     }
   });
+});
 
+describe('SPEC-805: HTTP server — messages', () => {
   test('POST /api/v1/messages with valid bearer token → 200 + queued', async () => {
     const token = generateBearerToken();
     const { channel, bus } = await startServer('ws-msg', token);
@@ -111,57 +108,6 @@ describe('SPEC-805: HTTP server', () => {
     }
   });
 
-  test('10 invalid auth attempts → IP banned → 429', async () => {
-    const token = generateBearerToken();
-    const { channel } = await startServer('ws-ban', token);
-    try {
-      for (let i = 0; i < 10; i++) {
-        await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'Authorization': 'Bearer nmbt_wrong_token_0000000000000000000000000',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ text: 'hi' }),
-        });
-      }
-      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer nmbt_wrong_token_0000000000000000000000000',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ text: 'hi' }),
-      });
-      expect([429, 401]).toContain(res.status);
-    } finally {
-      await channel.stop();
-    }
-  });
-
-  test('remote bind without TLS throws NimbusError', () => {
-    const bus = createEventBus();
-    const mgr = createChannelManager(bus);
-    expect(() =>
-      createHttpChannel({ port: 0, bindAddress: '0.0.0.0' }, mgr, 'ws-remote'),
-    ).toThrow();
-  });
-
-  test('stop() closes server gracefully', async () => {
-    const token = generateBearerToken();
-    const { channel } = await startServer('ws-stop', token);
-    const stoppedPort = channel.boundPort;
-    await channel.stop();
-    // After stop, requests should fail (connection refused).
-    let threw = false;
-    try {
-      await fetch(`http://127.0.0.1:${stoppedPort}/api/v1/health`, { signal: AbortSignal.timeout(500) });
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(true);
-  });
-
   test('POST /api/v1/messages missing text → 400', async () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-val', token);
@@ -194,53 +140,27 @@ describe('SPEC-805: HTTP server', () => {
   });
 });
 
-describe('SPEC-805: WS auth rejection tests', () => {
-  test('WS upgrade with token in query string → 401', async () => {
-    const token = generateBearerToken();
-    const { channel } = await startServer('ws-qs', token);
-    try {
-      // Attempt WS upgrade with token in query string — expect non-101 response.
-      const res = await fetch(
-        `http://127.0.0.1:${channel.boundPort}/api/v1/stream?token=${token}`,
-        {
-          headers: {
-            'Upgrade': 'websocket',
-            'Connection': 'Upgrade',
-            'Sec-WebSocket-Key': btoa('nimbus-test-key-12345678'),
-            'Sec-WebSocket-Version': '13',
-          },
-        },
-      );
-      expect(res.status).toBe(401);
-    } finally {
-      await channel.stop();
-    }
+describe('SPEC-805: HTTP server — lifecycle', () => {
+  test('remote bind throws NimbusError', () => {
+    const bus = createEventBus();
+    const mgr = createChannelManager(bus);
+    expect(() =>
+      createHttpChannel({ port: 0, bindAddress: '0.0.0.0' }, mgr, 'ws-remote'),
+    ).toThrow();
   });
-});
 
-describe('SPEC-805: pairing roundtrip', () => {
-  test('start pairing → redeem code → get token', async () => {
+  test('stop() closes server gracefully', async () => {
     const token = generateBearerToken();
-    const { channel } = await startServer('ws-pair', token);
+    const { channel } = await startServer('ws-stop', token);
+    const stoppedPort = channel.boundPort;
+    await channel.stop();
+    // After stop, requests should fail (connection refused).
+    let threw = false;
     try {
-      // Start pairing
-      const startRes = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/pair/start`, {
-        method: 'POST',
-      });
-      expect(startRes.status).toBe(200);
-      const startBody = await startRes.json() as { expiresAt: number; ttlMs: number };
-      expect(startBody.ttlMs).toBeGreaterThan(0);
-
-      // We can't get the plaintext code from HTTP (it's displayed to terminal),
-      // so we test that an invalid code is rejected.
-      const redeemRes = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/pair/redeem`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: '000000' }),
-      });
-      expect(redeemRes.status).toBe(401);
-    } finally {
-      await channel.stop();
+      await fetch(`http://127.0.0.1:${stoppedPort}/api/v1/health`, { signal: AbortSignal.timeout(500) });
+    } catch {
+      threw = true;
     }
+    expect(threw).toBe(true);
   });
 });

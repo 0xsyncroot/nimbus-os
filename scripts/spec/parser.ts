@@ -13,7 +13,10 @@ export const SpecFrontmatterSchema = z
     owner: z.string(),
     created: z.union([z.string(), z.date()]).transform((v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v)),
     updated: z.union([z.string(), z.date()]).transform((v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v)),
-    release: z.enum(['v0.1', 'v0.2', 'v0.3', 'v0.4', 'v0.5']).optional(),
+    release: z
+      .string()
+      .regex(/^v0\.\d+(\.\d+)?$/, "release must be 'v0.X' or 'v0.X.Y'")
+      .optional(),
     layer: z.string(),
     depends_on: z.array(z.string()).default([]),
     blocks: z.array(z.string()).default([]),

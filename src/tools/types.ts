@@ -15,7 +15,7 @@ export interface ToolContext {
   readonly signal: AbortSignal;
   readonly onAbort: (cleanup: () => void) => void;
   readonly permissions: Gate;
-  readonly mode: 'default' | 'readonly' | 'bypass';
+  readonly mode: 'default' | 'readonly' | 'bypass' | 'plan' | 'acceptEdits';
   readonly logger: Logger;
 }
 

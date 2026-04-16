@@ -7,15 +7,21 @@ import { createEditTool } from './builtin/Edit.ts';
 import { createGrepTool } from './builtin/Grep.ts';
 import { createGlobTool } from './builtin/Glob.ts';
 import { createBashTool } from './builtin/Bash.ts';
+import { createBashOutputTool } from './builtin/BashOutput.ts';
+import { createKillBashTool } from './builtin/KillBash.ts';
 import { createMemoryTool } from './builtin/Memory.ts';
 import { createWebSearchTool } from './builtin/WebSearch.ts';
 import { createWebFetchTool } from './builtin/WebFetch.ts';
 import { createAgentTool } from './agentTool.ts';
 import { createSendMessageTool } from './sendMessage.ts';
 import { createReceiveMessageTool } from './receiveMessage.ts';
+import { createEnterPlanModeTool } from './enterPlanMode.ts';
+import { createExitPlanModeTool } from './exitPlanMode.ts';
 
 export interface CreateDefaultsOptions {
   includeBash?: boolean;
+  /** Include BashOutput + KillBash background shell tools. Default: same as includeBash. */
+  includeShell?: boolean;
   includeMemory?: boolean;
   includeWeb?: boolean;
   /** Include sub-agent coordination tools (AgentTool, SendMessage, ReceiveMessage). Default: true. */
@@ -30,6 +36,11 @@ export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolReg
   registry.register(createGrepTool());
   registry.register(createGlobTool());
   if (opts.includeBash !== false) registry.register(createBashTool());
+  const includeShell = opts.includeShell ?? opts.includeBash ?? true;
+  if (includeShell !== false) {
+    registry.register(createBashOutputTool());
+    registry.register(createKillBashTool());
+  }
   if (opts.includeMemory !== false) registry.register(createMemoryTool());
   if (opts.includeWeb !== false) {
     registry.register(createWebSearchTool());
@@ -40,5 +51,8 @@ export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolReg
     registry.register(createSendMessageTool());
     registry.register(createReceiveMessageTool());
   }
+  // SPEC-133: plan mode tools always registered.
+  registry.register(createEnterPlanModeTool());
+  registry.register(createExitPlanModeTool());
   return registry;
 }

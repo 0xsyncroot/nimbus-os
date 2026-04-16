@@ -4,6 +4,7 @@
 
 import { ErrorCode, NimbusError, classify } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
+import { isAllowedInPlanMode } from '../permissions/mode.ts';
 import { newToolUseId } from '../ir/helpers.ts';
 import type {
   CanonicalBlock,
@@ -320,6 +321,49 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
       }
 
       const results: ToolResult[] = [];
+
+      // SPEC-133: Defense-in-depth plan mode gate — checked at executor entry
+      // before any tool dispatch. Non-whitelist tool in plan mode → T_PERMISSION + security event.
+      if (ctx.mode === 'plan') {
+        const blockedInvocations = pendingToolUses.filter((inv) => !isAllowedInPlanMode(inv.name));
+        if (blockedInvocations.length > 0) {
+          for (const inv of blockedInvocations) {
+            results.push({
+              toolUseId: inv.toolUseId,
+              ok: false,
+              content: new NimbusError(ErrorCode.T_PERMISSION, {
+                tool: inv.name,
+                reason: 'plan_mode_whitelist',
+                hint: 'Exit plan mode first',
+              }).message,
+              sideEffects: 'exec' as const,
+            });
+            publishSafe(bus, TOPICS.security.event, {
+              type: TOPICS.security.event,
+              adapterId: ctx.sessionId,
+              reason: `plan_mode_blocked:${inv.name}`,
+              userId: ctx.wsId,
+              ts: Date.now(),
+            });
+          }
+          // Remove blocked invocations from pure/serial dispatch queues.
+          const blockedIds = new Set(blockedInvocations.map((i) => i.toolUseId));
+          pure.splice(0, pure.length, ...pure.filter((i) => !blockedIds.has(i.toolUseId)));
+          serial.splice(0, serial.length, ...serial.filter((i) => !blockedIds.has(i.toolUseId)));
+          if (pure.length === 0 && serial.length === 0) {
+            // All blocked — push error blocks and continue to next iteration.
+            const blockedResultBlocks: CanonicalBlock[] = results.map((r) => ({
+              type: 'tool_result',
+              toolUseId: r.toolUseId,
+              content: r.content,
+              isError: true,
+            }));
+            conversation.push({ role: 'user', content: blockedResultBlocks });
+            await appendMessage(ctx.wsId, ctx.sessionId, conversation[conversation.length - 1]!, turnId).catch(() => undefined);
+            continue;
+          }
+        }
+      }
 
       const emitInvocation = (inv: ToolInvocation): void => {
         publishSafe(bus, TOPICS.session.toolUse, {

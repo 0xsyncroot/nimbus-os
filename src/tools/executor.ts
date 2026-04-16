@@ -21,7 +21,7 @@ export interface ExecutorRunContext {
   sessionId: string;
   turnId: string;
   cwd: string;
-  mode: 'default' | 'readonly' | 'bypass';
+  mode: 'default' | 'readonly' | 'bypass' | 'plan' | 'acceptEdits';
   permissions: Gate;
   parentSignal: AbortSignal;
 }

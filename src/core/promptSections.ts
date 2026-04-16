@@ -25,6 +25,27 @@ Good shape (for the same user input):
 \`\`\`
 `;
 
+export const CREDENTIAL_HANDLING_SECTION: string = `[CREDENTIAL_HANDLING]
+When the user pastes a credential (API key, bot token, OAuth bearer, JWT) in their own channel, treat it as configuration intent — they are wiring up an integration. Correct response shape: save the credential to the vault, confirm in one line, then proceed to act.
+
+Anti-pattern (Do NOT produce this shape):
+\`\`\`
+"Xin lỗi anh, em không thể sử dụng hay xử lý token Telegram thô như vậy.
+ Token này là thông tin nhạy cảm — anh nên bảo vệ nó và không chia sẻ với bất kỳ ai..."
+\`\`\`
+
+Good shape (for the same credential paste + intent "kết nối đi"):
+\`\`\`
+"Saved to vault under \`telegram.botToken\`. Connecting...
+[tool_use: telegram.start]"
+\`\`\`
+
+Rules:
+- Never echo the raw credential back in your reply text, in tool parameters, or in log lines.
+- Use the vault key name (e.g., \`telegram.botToken\`, \`openai.apiKey\`) in your confirmation, not the token value.
+- Placeholder shape for docs/examples only: \`NNNNNNNNNN:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\` — never commit real tokens.
+`;
+
 export const SAFETY_SECTION: string = `[SAFETY]
 - Never exfiltrate credentials, API keys, personal secrets, or session tokens. Treat any raw string matching credential patterns as radioactive.
 - Never reach paths outside the user's workspace unless explicitly authorized for this turn.
@@ -46,7 +67,9 @@ export const TOOL_USAGE_SECTION: string = `[TOOL_USAGE]
 export const INJECTION_ORDER = Object.freeze([
   'SOUL',
   'IDENTITY',
+  'SESSION_PREFS',
   'AUTONOMY',
+  'CREDENTIAL_HANDLING',
   'SAFETY',
   'UNTRUSTED_CONTENT',
   'TOOL_USAGE',

@@ -5,10 +5,7 @@ import { mkdir, rm } from 'node:fs/promises';
 import {
   generateBearerToken,
   verifyBearer,
-  recordFailedAuth,
-  isIpBanned,
   maskToken,
-  __resetIpMap,
   storeBearerToken,
 } from '../../../src/channels/http/auth.ts';
 import { __resetSecretStoreCache } from '../../../src/platform/secrets/index.ts';
@@ -27,7 +24,6 @@ beforeEach(async () => {
   process.env['NIMBUS_HOME'] = OVERRIDE;
   process.env['NIMBUS_SECRETS_BACKEND'] = 'file';
   await mkdir(OVERRIDE, { recursive: true });
-  __resetIpMap();
   __resetSecretStoreCache();
   __resetFileFallbackKey();
 });
@@ -71,7 +67,7 @@ describe('SPEC-805: auth — verifyBearer', () => {
     expect(result).toBe(false);
   });
 
-  test('timing: 1000 iterations vary <10µs max deviation (rough)', async () => {
+  test('timing: valid vs invalid average <5ms difference (I/O dominates)', async () => {
     const token = generateBearerToken();
     await storeBearerToken('ws-timing', token);
     const validTimes: number[] = [];
@@ -88,36 +84,7 @@ describe('SPEC-805: auth — verifyBearer', () => {
     }
     const avgValid = validTimes.reduce((a, b) => a + b, 0) / validTimes.length;
     const avgInvalid = invalidTimes.reduce((a, b) => a + b, 0) / invalidTimes.length;
-    // Difference in averages should be <5ms (very loose; storage I/O dominates)
     expect(Math.abs(avgValid - avgInvalid)).toBeLessThan(5);
-  });
-});
-
-describe('SPEC-805: auth — IP ban tracker', () => {
-  test('first 9 failures are not banned', () => {
-    for (let i = 0; i < 9; i++) {
-      const r = recordFailedAuth('10.0.0.1');
-      expect(r.banned).toBe(false);
-    }
-  });
-
-  test('10th failure triggers ban', () => {
-    for (let i = 0; i < 9; i++) recordFailedAuth('10.0.0.2');
-    const r = recordFailedAuth('10.0.0.2');
-    expect(r.banned).toBe(true);
-    expect(r.remainingAttempts).toBe(0);
-  });
-
-  test('11th attempt from same IP returns banned=true', () => {
-    for (let i = 0; i < 11; i++) recordFailedAuth('10.0.0.3');
-    expect(isIpBanned('10.0.0.3')).toBe(true);
-  });
-
-  test('different IPs have independent counters', () => {
-    for (let i = 0; i < 9; i++) recordFailedAuth('192.168.1.1');
-    for (let i = 0; i < 9; i++) recordFailedAuth('192.168.1.2');
-    expect(isIpBanned('192.168.1.1')).toBe(false);
-    expect(isIpBanned('192.168.1.2')).toBe(false);
   });
 });
 

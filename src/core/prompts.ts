@@ -9,6 +9,7 @@ import type { WorkspaceMemory } from './memoryTypes.ts';
 import type { SessionPreferences } from './sessionPreferences.ts';
 import {
   AUTONOMY_SECTION,
+  CREDENTIAL_HANDLING_SECTION,
   PROMPT_SIZE_ERROR_BYTES,
   PROMPT_SIZE_WARN_BYTES,
   SAFETY_SECTION,
@@ -70,11 +71,12 @@ export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
     }
   }
 
-  // 3-6. Static sections
+  // 3-7. Static sections
   blocks.push(textBlock(AUTONOMY_SECTION));
   if (planCue && planCue.length > 0) {
     blocks.push(textBlock(`${planCue}\n`));
   }
+  blocks.push(textBlock(CREDENTIAL_HANDLING_SECTION));
   blocks.push(textBlock(SAFETY_SECTION));
   blocks.push(textBlock(UNTRUSTED_CONTENT_SECTION));
   blocks.push(textBlock(TOOL_USAGE_SECTION));
