@@ -243,7 +243,9 @@ cleanup_existing() {
     found_paths="$existing"
   fi
 
-  # Well-known locations
+  # Well-known locations — scan broadly to catch stale cached paths
+  # even when the actual file is already gone (user's bash hash may still
+  # reference a deleted path). Includes nvm/* paths commonly hit.
   for candidate in \
     "/usr/local/bin/${BINARY_NAME}" \
     "/usr/bin/${BINARY_NAME}" \
@@ -258,6 +260,18 @@ cleanup_existing() {
     fi
   done
 
+  # Also scan nvm node_modules/.bin dirs (user's version may vary)
+  if [ -d "${HOME}/.nvm/versions/node" ]; then
+    for nvm_ver in "${HOME}"/.nvm/versions/node/*/bin/"${BINARY_NAME}"; do
+      if [ -f "$nvm_ver" ] && [ "$nvm_ver" != "$BINARY_PATH" ]; then
+        case "$found_paths" in
+          *"$nvm_ver"*) ;;
+          *) found_paths="${found_paths}${found_paths:+ }${nvm_ver}" ;;
+        esac
+      fi
+    done
+  fi
+
   if [ -z "$found_paths" ]; then
     return 0
   fi
@@ -267,15 +281,30 @@ cleanup_existing() {
     warn "  $p"
   done
 
-  if confirm "Remove existing nimbus binaries listed above?"; then
+  if confirm "Replace existing nimbus binaries with symlinks to the new install?"; then
+    # NOTE: we SYMLINK old paths to the new binary instead of deleting. Reason:
+    # bash/zsh caches command→path mappings. If we delete, the user's cached
+    # entry points to nothing and `nimbus` fails with "No such file or directory"
+    # until they run `hash -r`. By symlinking, the cached path still resolves to
+    # a valid executable — zero-friction for user regardless of shell cache state.
+    SYMLINKED_ANY=0
     for p in $found_paths; do
-      rm -f "$p" && success "Removed $p"
+      if [ "$p" = "$BINARY_PATH" ]; then continue; fi
+      if rm -f "$p" 2>/dev/null && ln -s "$BINARY_PATH" "$p" 2>/dev/null; then
+        success "Replaced $p → symlink to new install"
+        SYMLINKED_ANY=1
+      elif [ ! -e "$p" ]; then
+        success "Removed $p (could not create symlink — shell may need hash -r)"
+        REMOVED_ANY=1
+      else
+        warn "Could not replace $p (permission denied)"
+      fi
     done
-    # Invalidate shell's command hash cache (bash/zsh builtin; ignore failure on dash)
+    # Invalidate THIS subshell's hash (won't propagate to parent, but harmless)
     hash -r 2>/dev/null || true
-    # Flag so print_success can tell user to run `hash -r` in THEIR shell.
-    # (Our subshell's hash table won't propagate back to the parent interactive shell.)
-    REMOVED_ANY=1
+    # Flags for print_success
+    export SYMLINKED_ANY
+    REMOVED_ANY="${REMOVED_ANY:-0}"
     export REMOVED_ANY
   else
     warn "Skipping removal. Old binary may shadow the new install."
