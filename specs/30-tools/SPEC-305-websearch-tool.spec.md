@@ -1,11 +1,12 @@
 ---
 id: SPEC-305
 title: WebSearch tool — Tavily default, multi-backend
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
+implemented: 2026-04-16
 release: v0.2
 layer: tools
 depends_on: [SPEC-301, SPEC-152, META-003, META-009]
@@ -13,9 +14,12 @@ blocks: []
 estimated_loc: 200
 files_touched:
   - src/tools/builtin/WebSearch.ts
-  - src/tools/builtin/webSearchFetchers/tavily.ts
-  - src/tools/builtin/webSearchFetchers/brave.ts
-  - src/tools/builtin/webSearchFetchers/exa.ts
+  - src/tools/builtin/webSearch/types.ts
+  - src/tools/builtin/webSearch/sanitize.ts
+  - src/tools/builtin/webSearch/cache.ts
+  - src/tools/builtin/webSearch/tavily.ts
+  - src/tools/builtin/webSearch/brave.ts
+  - src/tools/builtin/webSearch/exa.ts
   - tests/tools/builtin/webSearch.test.ts
 ---
 
@@ -139,3 +143,4 @@ const WebSearchOutputSchema = z.object({
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — based on WebSearch API landscape research (Tavily/Brave/Exa comparison)
+- 2026-04-16 @developer-tools: implemented — raw HTTP fetchers (no SDK deps needed), file-backed LRU cache, HTML strip + injection detector, URL validator, fallback chain, cost event emission, 46 unit tests
