@@ -45,20 +45,18 @@ export function createManagedServer(opts: ServerLifecycleOptions): ManagedMcpSer
       serverName,
       ...opts.clientOptions,
     });
-    const transport = createTransport(serverName, config);
+    const transport = await createTransport(serverName, config);
     await c.connect(transport);
     return c;
   }
 
   async function connectWithBackoff(): Promise<McpClient> {
-    let attempts = 0;
     try {
       const c = await withBackoff(
         doConnect,
         backoffOpts,
         opts._sleep,
         (attempt, delayMs, err) => {
-          attempts = attempt + 1;
           logger.warn(
             {
               serverName,

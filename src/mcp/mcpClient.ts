@@ -1,11 +1,11 @@
 // mcpClient.ts — SPEC-306: MCPClient using @modelcontextprotocol/sdk.
 // Provides connect, disconnect, callTool, listTools, listResources.
+// SDK is loaded via dynamic import to allow typecheck without SDK installed.
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { ErrorCode, NimbusError, wrapError } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
 import { capToolOutput } from './mcpSecurity.ts';
+import type { Transport } from './transports.ts';
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 export const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
@@ -45,25 +45,36 @@ export interface McpClient {
   isConnected(): boolean;
 }
 
+// Minimal structural type matching the SDK Client's interface
+interface SdkClient {
+  connect(transport: unknown): Promise<void>;
+  close(): Promise<void>;
+  ping(): Promise<unknown>;
+  listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
+  listResources(): Promise<{ resources: Array<{ uri: string; name?: string; description?: string; mimeType?: string }> }>;
+  callTool(params: { name: string; arguments: Record<string, unknown> }): Promise<{ content: unknown; isError?: boolean }>;
+}
+
 /**
  * Create an MCPClient for a named server.
- * The client is stateful: track connection via internal flag.
+ * The client is stateful: tracks connection via internal flag.
  */
 export function createMcpClient(opts: McpClientOptions): McpClient {
   const { serverName } = opts;
   const toolTimeoutMs = opts.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const connectTimeoutMs = opts.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
 
-  let sdkClient: Client | null = null;
+  let sdkClient: SdkClient | null = null;
   let connected = false;
 
   async function connect(transport: Transport): Promise<void> {
     if (connected) return;
 
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
     sdkClient = new Client(
       { name: `nimbus-mcp-${serverName}`, version: '0.1.0' },
       { capabilities: {} },
-    );
+    ) as unknown as SdkClient;
 
     try {
       const connectPromise = sdkClient.connect(transport);

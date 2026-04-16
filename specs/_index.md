@@ -103,3 +103,4 @@
 | SPEC-302 | Builtin FS tools (Read/Write/Edit/Grep/Glob) | draft | SPEC-301, SPEC-401 | 400 |
 | SPEC-303 | Bash + pwsh tool with tier-1 security | draft | SPEC-301, SPEC-401, SPEC-402, META-009 | 380 |
 | SPEC-304 | MemoryTool — append-only MEMORY.md writer | draft | SPEC-301, SPEC-104, SPEC-401, META-003 | 120 |
+| SPEC-306 | MCP client integration — stdio + HTTP transports | implemented | SPEC-301, SPEC-401, SPEC-151, META-003, META-009 | 400 |

@@ -1,11 +1,12 @@
 ---
 id: SPEC-320
 title: Skills loader + 7 bundled skills
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
+implemented_date: 2026-04-16
 release: v0.2
 layer: tools
 depends_on: [SPEC-301, SPEC-103]

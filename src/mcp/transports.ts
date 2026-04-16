@@ -1,9 +1,7 @@
 // transports.ts — SPEC-306: Transport factory for stdio + HTTP streamable MCP transports.
 // Bun-native: relies on Bun.spawn for stdio; fetch for HTTP.
+// SDK is loaded via dynamic import to allow typecheck without SDK installed.
 
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { McpServerConfig, McpStdioConfig, McpHttpConfig } from './mcpConfig.ts';
 import { sanitizeSubprocessEnv } from './mcpSecurity.ts';
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
@@ -11,12 +9,23 @@ import { ErrorCode, NimbusError } from '../observability/errors.ts';
 /** DEFAULT_CONNECT_TIMEOUT_MS — also used in healthcheck */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
+// Use structural typing for Transport to avoid hard SDK dep at the type level.
+// The SDK's Transport interface matches this shape.
+export interface Transport {
+  start(): Promise<void>;
+  close(): Promise<void>;
+  send(message: unknown): Promise<void>;
+  onmessage?: ((message: unknown) => void) | undefined;
+  onerror?: ((error: Error) => void) | undefined;
+  onclose?: (() => void) | undefined;
+}
+
 /**
  * Build a transport from a validated McpServerConfig.
  * For stdio: sanitizes subprocess env before spawn.
  * For http: passes headers directly (user is responsible for secret hygiene).
  */
-export function createTransport(serverName: string, config: McpServerConfig): Transport {
+export async function createTransport(serverName: string, config: McpServerConfig): Promise<Transport> {
   if (config.type === 'stdio') {
     return createStdioTransport(serverName, config);
   }
@@ -32,7 +41,7 @@ export function createTransport(serverName: string, config: McpServerConfig): Tr
   });
 }
 
-function createStdioTransport(serverName: string, config: McpStdioConfig): Transport {
+async function createStdioTransport(serverName: string, config: McpStdioConfig): Promise<Transport> {
   // Merge base process env + config env, then sanitize
   const baseEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
@@ -41,18 +50,24 @@ function createStdioTransport(serverName: string, config: McpStdioConfig): Trans
   const merged = config.env ? { ...baseEnv, ...config.env } : baseEnv;
   const cleanEnv = sanitizeSubprocessEnv(merged);
 
+  // Dynamic import to avoid hard compile-time dep
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
   return new StdioClientTransport({
     command: config.command,
     args: config.args ?? [],
     env: cleanEnv,
-  });
+  }) as unknown as Transport;
 }
 
-function createHttpTransport(serverName: string, config: McpHttpConfig): Transport {
+async function createHttpTransport(_serverName: string, config: McpHttpConfig): Promise<Transport> {
   const url = new URL(config.url);
   const requestInit: RequestInit | undefined = config.headers
     ? { headers: config.headers }
     : undefined;
 
-  return new StreamableHTTPClientTransport(url, requestInit !== undefined ? { requestInit } : undefined);
+  const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js');
+  return new StreamableHTTPClientTransport(
+    url,
+    requestInit !== undefined ? { requestInit } : undefined,
+  ) as unknown as Transport;
 }

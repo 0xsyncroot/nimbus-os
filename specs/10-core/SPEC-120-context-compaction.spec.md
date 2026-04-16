@@ -1,11 +1,12 @@
 ---
 id: SPEC-120
 title: Context compaction — full + micro + sliding window
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
+implemented: 2026-04-16
 release: v0.2
 layer: core
 depends_on: [SPEC-103, SPEC-201, SPEC-202, SPEC-203, SPEC-105]

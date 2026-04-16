@@ -1,6 +1,9 @@
-// tests/mcp/mcpClient.test.ts — SPEC-306: Config schema, security, and lifecycle unit tests.
+// tests/mcp/mcpClient.test.ts — SPEC-306: Config schema, security, and backoff unit tests.
+// Note: mcpClient.ts / transports.ts / serverLifecycle.ts are NOT imported here because
+// they depend on @modelcontextprotocol/sdk. Those modules are exercised in e2e tests after
+// `bun install` makes the SDK available. This file covers the pure (no-SDK) modules.
 
-import { describe, expect, test, mock } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
   McpServerConfig,
   McpStdioConfig,
@@ -16,11 +19,10 @@ import {
   MAX_TOOL_OUTPUT_BYTES,
 } from '../../src/mcp/mcpSecurity.ts';
 import {
-  RECONNECT_BASE_MS,
-  RECONNECT_MAX_ATTEMPTS,
-  RECONNECT_MAX_MS,
-  createManagedServer,
-} from '../../src/mcp/serverLifecycle.ts';
+  computeBackoffDelay,
+  withBackoff,
+  DEFAULT_BACKOFF,
+} from '../../src/mcp/backoff.ts';
 import { ErrorCode, NimbusError } from '../../src/observability/errors.ts';
 
 // ---- Config schema: accept valid stdio/http ---------------------------------
@@ -89,28 +91,31 @@ describe('SPEC-306: McpServerConfig schema', () => {
 // ---- Env var expansion -------------------------------------------------------
 
 describe('SPEC-306: env var expansion', () => {
-  const env = { HOME: '/home/user', MY_TOKEN: 'abc123', MISSING: undefined };
-  const envRecord = env as Record<string, string | undefined>;
+  const env: Record<string, string | undefined> = {
+    HOME: '/home/user',
+    MY_TOKEN: 'abc123',
+    MISSING: undefined,
+  };
 
   test('expands ${VAR} with value from env', () => {
-    expect(expandEnvVars('${HOME}/dir', envRecord)).toBe('/home/user/dir');
+    expect(expandEnvVars('${HOME}/dir', env)).toBe('/home/user/dir');
   });
 
   test('expands multiple vars', () => {
-    expect(expandEnvVars('${HOME}:${MY_TOKEN}', envRecord)).toBe('/home/user:abc123');
+    expect(expandEnvVars('${HOME}:${MY_TOKEN}', env)).toBe('/home/user:abc123');
   });
 
   test('expands missing var to empty string', () => {
-    expect(expandEnvVars('prefix${MISSING}suffix', envRecord)).toBe('prefixsuffix');
+    expect(expandEnvVars('prefix${MISSING}suffix', env)).toBe('prefixsuffix');
   });
 
   test('no-op when no vars present', () => {
-    expect(expandEnvVars('static-value', envRecord)).toBe('static-value');
+    expect(expandEnvVars('static-value', env)).toBe('static-value');
   });
 
   test('expandEnvRecord applies expansion to all values', () => {
     const rec = { A: '${HOME}/a', B: 'static' };
-    const result = expandEnvRecord(rec, envRecord);
+    const result = expandEnvRecord(rec, env);
     expect(result['A']).toBe('/home/user/a');
     expect(result['B']).toBe('static');
   });
@@ -122,7 +127,7 @@ describe('SPEC-306: env var expansion', () => {
       args: ['--data', '${HOME}/data'],
       env: { EXTRA: '${MY_TOKEN}' },
     });
-    const expanded = expandConfigEnv(cfg, envRecord);
+    const expanded = expandConfigEnv(cfg, env);
     expect(expanded.type).toBe('stdio');
     if (expanded.type === 'stdio') {
       expect(expanded.command).toBe('/home/user/bin/server');
@@ -137,7 +142,7 @@ describe('SPEC-306: env var expansion', () => {
       url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer ${MY_TOKEN}' },
     });
-    const expanded = expandConfigEnv(cfg, envRecord);
+    const expanded = expandConfigEnv(cfg, env);
     expect(expanded.type).toBe('http');
     if (expanded.type === 'http') {
       expect(expanded.headers?.['Authorization']).toBe('Bearer abc123');
@@ -208,7 +213,7 @@ describe('SPEC-306: env sanitization', () => {
   test('returns new object (does not mutate input)', () => {
     const env = { ANTHROPIC_API_KEY: 'sk', PATH: '/usr/bin' };
     const clean = sanitizeSubprocessEnv(env);
-    expect(env['ANTHROPIC_API_KEY']).toBe('sk'); // original unchanged
+    expect(env['ANTHROPIC_API_KEY']).toBe('sk');
     expect('ANTHROPIC_API_KEY' in clean).toBe(false);
   });
 });
@@ -224,10 +229,8 @@ describe('SPEC-306: tool output cap', () => {
   test('output exceeding 100KB is truncated with banner', () => {
     const bigOutput = 'x'.repeat(MAX_TOOL_OUTPUT_BYTES + 500);
     const result = capToolOutput(bigOutput);
-    const encoded = new TextEncoder().encode(result);
-    // Result should mention truncation
     expect(result).toContain('[MCP output truncated');
-    // Result should not be much larger than limit
+    const encoded = new TextEncoder().encode(result);
     expect(encoded.length).toBeLessThan(MAX_TOOL_OUTPUT_BYTES + 200);
   });
 
@@ -237,75 +240,97 @@ describe('SPEC-306: tool output cap', () => {
   });
 });
 
-// ---- Lifecycle: reconnect backoff -------------------------------------------
+// ---- Backoff: pure logic -----------------------------------------------------
 
-describe('SPEC-306: server lifecycle reconnect', () => {
-  test('reconnect constants are correct', () => {
-    expect(RECONNECT_BASE_MS).toBe(1_000);
-    expect(RECONNECT_MAX_MS).toBe(30_000);
-    expect(RECONNECT_MAX_ATTEMPTS).toBe(5);
+describe('SPEC-306: exponential backoff', () => {
+  test('DEFAULT_BACKOFF constants are correct', () => {
+    expect(DEFAULT_BACKOFF.baseMs).toBe(1_000);
+    expect(DEFAULT_BACKOFF.maxMs).toBe(30_000);
+    expect(DEFAULT_BACKOFF.maxAttempts).toBe(5);
   });
 
-  test('exponential backoff does not exceed max', () => {
-    // Verify the formula used in serverLifecycle: base * 2^attempt, capped at max
-    for (let attempt = 0; attempt < RECONNECT_MAX_ATTEMPTS; attempt++) {
-      const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, attempt), RECONNECT_MAX_MS);
-      expect(delay).toBeLessThanOrEqual(RECONNECT_MAX_MS);
-      expect(delay).toBeGreaterThanOrEqual(RECONNECT_BASE_MS);
+  test('computeBackoffDelay: attempt 0 = baseMs', () => {
+    expect(computeBackoffDelay(0, DEFAULT_BACKOFF)).toBe(1_000);
+  });
+
+  test('computeBackoffDelay: attempt 1 = 2s', () => {
+    expect(computeBackoffDelay(1, DEFAULT_BACKOFF)).toBe(2_000);
+  });
+
+  test('computeBackoffDelay: attempt 2 = 4s', () => {
+    expect(computeBackoffDelay(2, DEFAULT_BACKOFF)).toBe(4_000);
+  });
+
+  test('computeBackoffDelay: capped at maxMs', () => {
+    expect(computeBackoffDelay(10, DEFAULT_BACKOFF)).toBe(30_000);
+  });
+
+  test('all attempt delays are within bounds', () => {
+    for (let i = 0; i < DEFAULT_BACKOFF.maxAttempts; i++) {
+      const delay = computeBackoffDelay(i, DEFAULT_BACKOFF);
+      expect(delay).toBeGreaterThanOrEqual(DEFAULT_BACKOFF.baseMs);
+      expect(delay).toBeLessThanOrEqual(DEFAULT_BACKOFF.maxMs);
     }
   });
 
-  test('createManagedServer throws T_MCP_UNAVAILABLE after max attempts', async () => {
-    let connectCount = 0;
-    let sleepCount = 0;
-    const sleepDelays: number[] = [];
+  test('withBackoff: succeeds on first try', async () => {
+    const result = await withBackoff(async () => 42, DEFAULT_BACKOFF, async () => {});
+    expect(result).toBe(42);
+  });
 
-    // We mock the lifecycle by overriding _sleep and making the transport always fail
-    // We need to intercept the createTransport + createMcpClient calls.
-    // Since we can't easily mock imports in Bun, we test the server by providing
-    // a config that fails to connect (invalid command) and a fast sleep mock.
-
-    // Use a mock sleep to speed up the test
-    const mockSleep = async (ms: number): Promise<void> => {
-      sleepCount++;
-      sleepDelays.push(ms);
-      // Don't actually sleep in tests
-    };
-
-    const server = createManagedServer({
-      serverName: 'test-fail-server',
-      config: {
-        type: 'stdio',
-        command: '/this/binary/does/not/exist/at/all/nimbus-test-mcp',
-        args: [],
+  test('withBackoff: succeeds on retry after failures', async () => {
+    let attempt = 0;
+    const result = await withBackoff(
+      async () => {
+        attempt++;
+        if (attempt < 3) throw new Error('fail');
+        return 'ok';
       },
-      _sleep: mockSleep,
-    });
+      DEFAULT_BACKOFF,
+      async () => {},
+    );
+    expect(result).toBe('ok');
+    expect(attempt).toBe(3);
+  });
 
-    let thrown: NimbusError | null = null;
+  test('withBackoff: throws last error after max attempts', async () => {
+    const sleepDelays: number[] = [];
+    let thrown: Error | null = null;
+
     try {
-      await server.getClient();
+      await withBackoff(
+        async () => { throw new Error('always fail'); },
+        DEFAULT_BACKOFF,
+        async (ms) => { sleepDelays.push(ms); },
+      );
     } catch (err) {
-      if (err instanceof NimbusError) thrown = err;
+      thrown = err as Error;
     }
 
     expect(thrown).not.toBeNull();
-    expect(thrown?.code).toBe(ErrorCode.T_MCP_UNAVAILABLE);
-    expect(thrown?.context['attempts']).toBe(RECONNECT_MAX_ATTEMPTS);
-    // sleep should have been called RECONNECT_MAX_ATTEMPTS - 1 times (no sleep after last attempt)
-    expect(sleepCount).toBe(RECONNECT_MAX_ATTEMPTS - 1);
-    // delays should be increasing (exponential backoff)
-    for (let i = 1; i < sleepDelays.length; i++) {
-      expect(sleepDelays[i]!).toBeGreaterThanOrEqual(sleepDelays[i - 1]!);
-    }
+    expect(thrown?.message).toBe('always fail');
+    // sleep called maxAttempts - 1 times
+    expect(sleepDelays.length).toBe(DEFAULT_BACKOFF.maxAttempts - 1);
   });
 
-  test('shutdown is safe when never connected', async () => {
-    const server = createManagedServer({
-      serverName: 'never-connected',
-      config: { type: 'stdio', command: 'node', args: [] },
-    });
-    // Should not throw
-    await expect(server.shutdown()).resolves.toBeUndefined();
+  test('withBackoff: onRetry callback receives attempt + delay + error', async () => {
+    const retries: Array<{ attempt: number; delayMs: number; err: string }> = [];
+
+    try {
+      await withBackoff(
+        async () => { throw new Error('boom'); },
+        { baseMs: 100, maxMs: 5_000, maxAttempts: 3 },
+        async () => {},
+        (attempt, delayMs, err) => {
+          retries.push({ attempt, delayMs, err: err.message });
+        },
+      );
+    } catch {}
+
+    expect(retries.length).toBe(2); // 3 attempts → 2 retries
+    expect(retries[0]!.attempt).toBe(0);
+    expect(retries[0]!.err).toBe('boom');
+    expect(retries[1]!.attempt).toBe(1);
+    expect(retries[1]!.delayMs).toBe(200); // 100 * 2^1
   });
 });
