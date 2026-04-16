@@ -1,7 +1,7 @@
 // init.ts — SPEC-901 T4/T5: orchestrate init wizard → workspace + 6 files + .dreams/.
 
 import { join, isAbsolute, normalize } from 'node:path';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
@@ -14,9 +14,9 @@ import {
 } from '../storage/workspaceStore.ts';
 import { switchWorkspace } from '../core/workspace.ts';
 import { askAll, InitAnswersSchema, type InitAnswers } from './questions.ts';
-import { renderTemplates } from './templates.ts';
+import { renderTemplates, DEFAULT_SOUL_MD } from './templates.ts';
 import { promptApiKey } from './keyPrompt.ts';
-import { validateKeyFormat } from './keyValidators.ts';
+import { validateKeyFormat, detectProviderFromKey } from './keyValidators.ts';
 import { createKeyManager, type KeyManager } from '../key/manager.ts';
 import { discoverModels, type DiscoverProvider } from '../catalog/discover.ts';
 import { pickModel } from '../catalog/picker.ts';
@@ -340,4 +340,91 @@ function resolveModelName(
   return 'claude-sonnet-4-6';
 }
 
-export const __testing = { validateLocation, resolveModelName, todayIso };
+// ---------------------------------------------------------------------------
+// Quick-init: "paste key → go" used by the auto-first-run path in cli.ts.
+// Creates only 2 files: workspace.json + SOUL.md.  No wizard, no .dreams/.
+// ---------------------------------------------------------------------------
+
+export interface QuickInitResult {
+  wsId: string;
+  name: string;
+  provider: string;
+  model: string;
+}
+
+/**
+ * detectEnvKey — check common env vars and return the first found key + provider.
+ * Priority: ANTHROPIC_API_KEY → OPENAI_API_KEY → GROQ_API_KEY.
+ */
+export function detectEnvKey(): { key: string; envVar: string } | null {
+  const candidates = [
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'GROQ_API_KEY',
+  ] as const;
+  for (const envVar of candidates) {
+    const val = process.env[envVar];
+    if (val && val.length > 0) return { key: val, envVar };
+  }
+  return null;
+}
+
+/**
+ * quickInit — minimal workspace creation for the auto-first-run path.
+ * Only creates workspace.json + SOUL.md (no IDENTITY/MEMORY/TOOLS/DREAMS/CLAUDE).
+ * Optionally stores the API key in the vault if provided.
+ */
+export async function quickInit(
+  detected: { provider: string; defaultModel: string; kind: 'anthropic' | 'openai-compat'; defaultEndpoint?: string; defaultBaseUrl?: string },
+  apiKey: string | undefined,
+  opts: { keyManager?: KeyManager; output?: NodeJS.WritableStream } = {},
+): Promise<QuickInitResult> {
+  const write = (s: string): void => {
+    (opts.output ?? process.stdout).write(s);
+  };
+
+  const today = todayIso();
+
+  // Create workspace dir + workspace.json
+  const { meta } = await createWorkspaceDir({
+    name: 'personal',
+    defaultProvider: detected.kind,
+    defaultModel: detected.defaultModel,
+    ...(detected.defaultEndpoint !== undefined ? { defaultEndpoint: detected.defaultEndpoint as 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom' } : {}),
+    ...(detected.defaultBaseUrl !== undefined ? { defaultBaseUrl: detected.defaultBaseUrl } : {}),
+  });
+
+  // Write SOUL.md — overwrite the stub written by createWorkspaceDir
+  const { paths } = await loadWorkspace(meta.id);
+  const soulContent = DEFAULT_SOUL_MD(today);
+  await writeFile(paths.soulMd, soulContent, { encoding: 'utf8' });
+  if (detect().os !== 'win32') {
+    await chmod(paths.soulMd, 0o600).catch(() => undefined);
+  }
+
+  // Remove the extra stub files that createWorkspaceDir writes — quickInit is 2-file only.
+  for (const stub of [paths.identityMd, paths.memoryMd, paths.toolsMd]) {
+    await rm(stub, { force: true }).catch(() => undefined);
+  }
+
+  await switchWorkspace(meta.id);
+
+  // Store API key if provided
+  if (apiKey) {
+    try {
+      const manager = opts.keyManager ?? createKeyManager();
+      await manager.set(detected.provider, apiKey, { wsId: meta.id });
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'quick_init_key_store_failed',
+      );
+      write(`  (key store failed — run \`nimbus key set ${detected.provider}\` later)\n`);
+    }
+  }
+
+  logger.info({ wsId: meta.id, provider: detected.provider }, 'quick_init_completed');
+  return { wsId: meta.id, name: meta.name, provider: detected.provider, model: meta.defaultModel };
+}
+
+export const __testing = { validateLocation, resolveModelName, todayIso, detectEnvKey };

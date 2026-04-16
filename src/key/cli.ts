@@ -109,6 +109,10 @@ async function handleSet(
   // the secret store sidecar, so `key set --base-url` silently wouldn't take effect at runtime.
   if (flags.baseUrl) {
     await alignWorkspaceBaseUrl(flags.provider, flags.baseUrl, output);
+  } else {
+    // Always align workspace provider kind even when no --base-url is given.
+    // e.g. `nimbus key set openai` (no --base-url) should flip defaultProvider to openai-compat.
+    await alignWorkspaceProvider(flags.provider, output);
   }
   return 0;
 }
@@ -116,6 +120,44 @@ async function handleSet(
 function workspaceKindFor(provider: string): 'anthropic' | 'openai-compat' {
   // anthropic stays anthropic; everything else (openai/groq/deepseek/ollama) is openai-compat.
   return provider === 'anthropic' ? 'anthropic' : 'openai-compat';
+}
+
+const DEFAULT_MODELS: Record<string, string> = {
+  anthropic: 'claude-sonnet-4-6',
+  openai: 'gpt-4o-mini',
+  groq: 'llama-3.3-70b-versatile',
+  deepseek: 'deepseek-chat',
+  ollama: 'llama3.2',
+};
+
+/**
+ * Always-run after `key set` (no --base-url path).
+ * Flips defaultProvider and defaultModel in workspace.json when the stored provider
+ * kind differs from what is already configured.  Idempotent — no write when already aligned.
+ */
+async function alignWorkspaceProvider(
+  provider: string,
+  output: NodeJS.WritableStream,
+): Promise<void> {
+  const { getActiveWorkspace } = await import('../core/workspace.ts');
+  const { updateWorkspace } = await import('../storage/workspaceStore.ts');
+  const active = await getActiveWorkspace();
+  if (!active) return;
+
+  const targetKind = workspaceKindFor(provider);
+  if (active.defaultProvider === targetKind) return; // already aligned — no-op
+
+  const prevKind = active.defaultProvider;
+  const targetModel = DEFAULT_MODELS[provider] ?? active.defaultModel;
+
+  output.write(
+    `  → workspace provider: ${prevKind} → ${targetKind}\n`,
+  );
+
+  await updateWorkspace(active.id, {
+    defaultProvider: targetKind,
+    defaultModel: targetModel,
+  });
 }
 
 async function alignWorkspaceBaseUrl(

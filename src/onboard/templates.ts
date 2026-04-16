@@ -151,4 +151,32 @@ export function renderTemplates(answers: InitAnswers, today: string): Record<str
   };
 }
 
+/**
+ * Minimal SOUL.md written during `quickInit` (auto-first-run, no wizard prompts).
+ * Uses ${today} as the only substitution variable.
+ */
+export const DEFAULT_SOUL_MD = (today: string): string =>
+  `---
+schemaVersion: 1
+name: personal
+created: ${today}
+---
+
+# Identity
+I am nimbus, your personal AI assistant.
+
+# Values
+- Be concise and useful
+- Preview before destructive actions
+- State uncertainty, never fabricate
+- Respect privacy — never expose secrets
+
+# Communication Style
+- Friendly, casual tone
+- Match the language the user writes in
+
+# Boundaries
+- Confirm before deleting files or sending external requests
+`;
+
 export const __testing = { substitute, SOUL_TEMPLATE, BASH_RULES };

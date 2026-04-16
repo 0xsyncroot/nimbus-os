@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Writable } from 'node:stream';
 import matter from 'gray-matter';
-import { runInit, __testing } from '../../src/onboard/init.ts';
+import { runInit, quickInit, __testing } from '../../src/onboard/init.ts';
 import { workspacesDir } from '../../src/platform/paths.ts';
 import { listWorkspaces, loadWorkspace } from '../../src/storage/workspaceStore.ts';
 import { ErrorCode, NimbusError } from '../../src/observability/errors.ts';
@@ -119,5 +119,140 @@ describe('SPEC-901: runInit', () => {
     expect(__testing.resolveModelName('anthropic', 'budget')).toContain('haiku');
     expect(__testing.resolveModelName('anthropic', 'workhorse')).toContain('sonnet');
     expect(__testing.resolveModelName('ollama', 'workhorse')).toBe('llama3.2');
+  });
+});
+
+describe('SPEC-901: quickInit — 2-file minimal workspace creation', () => {
+  test('creates workspace.json + SOUL.md only (no IDENTITY/MEMORY/TOOLS/DREAMS)', async () => {
+    const output = sinkOutput();
+    const result = await quickInit(
+      { provider: 'anthropic', kind: 'anthropic', defaultModel: 'claude-sonnet-4-6' },
+      undefined,
+      { output },
+    );
+    expect(result.name).toBe('personal');
+    expect(result.provider).toBe('anthropic');
+    expect(result.model).toBe('claude-sonnet-4-6');
+
+    const all = await listWorkspaces();
+    const created = all.find((w) => w.name === 'personal');
+    expect(created).toBeTruthy();
+
+    const { paths } = await loadWorkspace(created!.id);
+    const entries = await readdir(paths.root);
+    expect(entries).toContain('SOUL.md');
+    expect(entries).toContain('workspace.json');
+    // Optional files must NOT be written by quickInit
+    expect(entries).not.toContain('IDENTITY.md');
+    expect(entries).not.toContain('MEMORY.md');
+    expect(entries).not.toContain('TOOLS.md');
+    expect(entries).not.toContain('DREAMS.md');
+    expect(entries).not.toContain('CLAUDE.md');
+    expect(entries).not.toContain('.dreams');
+  });
+
+  test('SOUL.md has correct schemaVersion and creation date', async () => {
+    const output = sinkOutput();
+    await quickInit(
+      { provider: 'openai', kind: 'openai-compat', defaultModel: 'gpt-4o-mini', defaultEndpoint: 'openai' },
+      undefined,
+      { output },
+    );
+    const all = await listWorkspaces();
+    const created = all.find((w) => w.name === 'personal');
+    expect(created).toBeTruthy();
+    const { paths } = await loadWorkspace(created!.id);
+    const soul = await Bun.file(paths.soulMd).text();
+    const parsed = matter(soul);
+    expect(parsed.data['schemaVersion']).toBe(1);
+    // gray-matter may parse the ISO date as a Date object or string — either is valid
+    expect(parsed.data['created']).toBeDefined();
+    expect(soul).toContain('nimbus');
+  });
+
+  test('workspace.json reflects openai-compat provider + model for openai key', async () => {
+    const output = sinkOutput();
+    await quickInit(
+      { provider: 'openai', kind: 'openai-compat', defaultModel: 'gpt-4o-mini', defaultEndpoint: 'openai' },
+      undefined,
+      { output },
+    );
+    const all = await listWorkspaces();
+    const ws = all.find((w) => w.name === 'personal');
+    expect(ws!.defaultProvider).toBe('openai-compat');
+    expect(ws!.defaultModel).toBe('gpt-4o-mini');
+  });
+
+  test('workspace.json reflects groq provider with endpoint + baseUrl', async () => {
+    const output = sinkOutput();
+    await quickInit(
+      {
+        provider: 'groq',
+        kind: 'openai-compat',
+        defaultModel: 'llama-3.3-70b-versatile',
+        defaultEndpoint: 'groq',
+        defaultBaseUrl: 'https://api.groq.com/openai/v1',
+      },
+      undefined,
+      { output },
+    );
+    const all = await listWorkspaces();
+    const ws = all.find((w) => w.name === 'personal');
+    expect(ws!.defaultProvider).toBe('openai-compat');
+    expect(ws!.defaultEndpoint).toBe('groq');
+    expect(ws!.defaultBaseUrl).toBe('https://api.groq.com/openai/v1');
+  });
+});
+
+describe('SPEC-901: detectEnvKey', () => {
+  test('returns null when no env vars set', () => {
+    const saved = {
+      ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY'],
+      OPENAI_API_KEY: process.env['OPENAI_API_KEY'],
+      GROQ_API_KEY: process.env['GROQ_API_KEY'],
+    };
+    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env['OPENAI_API_KEY'];
+    delete process.env['GROQ_API_KEY'];
+    const result = __testing.detectEnvKey();
+    expect(result).toBeNull();
+    // restore
+    if (saved.ANTHROPIC_API_KEY) process.env['ANTHROPIC_API_KEY'] = saved.ANTHROPIC_API_KEY;
+    if (saved.OPENAI_API_KEY) process.env['OPENAI_API_KEY'] = saved.OPENAI_API_KEY;
+    if (saved.GROQ_API_KEY) process.env['GROQ_API_KEY'] = saved.GROQ_API_KEY;
+  });
+
+  test('detects ANTHROPIC_API_KEY with highest priority', () => {
+    const saved = {
+      ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY'],
+      OPENAI_API_KEY: process.env['OPENAI_API_KEY'],
+    };
+    process.env['ANTHROPIC_API_KEY'] = 'sk-ant-testkey';
+    process.env['OPENAI_API_KEY'] = 'sk-openaikey';
+    const result = __testing.detectEnvKey();
+    expect(result).not.toBeNull();
+    expect(result!.envVar).toBe('ANTHROPIC_API_KEY');
+    expect(result!.key).toBe('sk-ant-testkey');
+    // restore
+    if (saved.ANTHROPIC_API_KEY) process.env['ANTHROPIC_API_KEY'] = saved.ANTHROPIC_API_KEY;
+    else delete process.env['ANTHROPIC_API_KEY'];
+    if (saved.OPENAI_API_KEY) process.env['OPENAI_API_KEY'] = saved.OPENAI_API_KEY;
+    else delete process.env['OPENAI_API_KEY'];
+  });
+
+  test('falls through to OPENAI_API_KEY when ANTHROPIC absent', () => {
+    const saved = {
+      ANTHROPIC_API_KEY: process.env['ANTHROPIC_API_KEY'],
+      OPENAI_API_KEY: process.env['OPENAI_API_KEY'],
+    };
+    delete process.env['ANTHROPIC_API_KEY'];
+    process.env['OPENAI_API_KEY'] = 'sk-openaifoo';
+    const result = __testing.detectEnvKey();
+    expect(result!.envVar).toBe('OPENAI_API_KEY');
+    // restore
+    if (saved.ANTHROPIC_API_KEY) process.env['ANTHROPIC_API_KEY'] = saved.ANTHROPIC_API_KEY;
+    else delete process.env['ANTHROPIC_API_KEY'];
+    if (saved.OPENAI_API_KEY) process.env['OPENAI_API_KEY'] = saved.OPENAI_API_KEY;
+    else delete process.env['OPENAI_API_KEY'];
   });
 });

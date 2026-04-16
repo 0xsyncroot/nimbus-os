@@ -47,6 +47,67 @@ function parseFlags(rest: string[]): ParsedFlags {
   return flags;
 }
 
+/**
+ * runAutoInit — called when `nimbus` is run for the first time with no workspace.
+ * 1. Check env vars (ANTHROPIC_API_KEY / OPENAI_API_KEY / GROQ_API_KEY)
+ * 2. If found → auto-create "personal" workspace with detected provider
+ * 3. If not found → prompt "Paste your API key:" → detect provider → create workspace
+ */
+async function runAutoInit(): Promise<void> {
+  const { detectEnvKey, quickInit } = await import('./onboard/init.ts');
+  const { detectProviderFromKey } = await import('./onboard/keyValidators.ts');
+  const { readKeyFromStdin } = await import('./onboard/keyPrompt.ts');
+
+  const envFound = detectEnvKey();
+  if (envFound) {
+    const detected = detectProviderFromKey(envFound.key);
+    if (detected) {
+      process.stdout.write(`  Found ${detected.provider} key (${ envFound.envVar}). Setting up workspace...\n`);
+      await quickInit(
+        { provider: detected.provider, defaultModel: detected.defaultModel, kind: detected.kind, defaultEndpoint: detected.defaultEndpoint, defaultBaseUrl: detected.defaultBaseUrl },
+        envFound.key,
+      );
+      process.stdout.write(`  Ready. Workspace "personal" created.\n\n`);
+      return;
+    }
+  }
+
+  // No env key found or couldn't detect → prompt user
+  process.stdout.write(`\n  Welcome to nimbus!\n  No workspace found.\n\n`);
+  const isTTY = process.stdin.isTTY;
+  let key: string | undefined;
+  let detectedProvider;
+
+  if (isTTY) {
+    process.stdout.write(`  Paste your API key (Anthropic, OpenAI, or Groq): `);
+    try {
+      key = await readKeyFromStdin(process.stdin as NodeJS.ReadStream);
+    } catch {
+      // non-interactive fallback
+    }
+  }
+
+  if (key) {
+    detectedProvider = detectProviderFromKey(key);
+  }
+
+  if (!key || !detectedProvider) {
+    process.stderr.write(
+      `  Could not detect provider from key. Run \`nimbus init\` for full setup.\n`,
+    );
+    // Fall through — init without a key so user gets REPL and can configure later.
+    // Use anthropic as default to not break startup.
+    detectedProvider = { provider: 'anthropic', kind: 'anthropic' as const, defaultModel: 'claude-sonnet-4-6' };
+    key = undefined;
+  }
+
+  await quickInit(
+    { provider: detectedProvider.provider, defaultModel: detectedProvider.defaultModel, kind: detectedProvider.kind, defaultEndpoint: detectedProvider.defaultEndpoint, defaultBaseUrl: detectedProvider.defaultBaseUrl },
+    key,
+  );
+  process.stdout.write(`  Ready. Workspace "personal" created.\n\n`);
+}
+
 async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
@@ -85,6 +146,12 @@ async function main(): Promise<number> {
       return runKeyCli({ argv: args.slice(1) });
     }
     case undefined: {
+      const { getActiveWorkspace } = await import('./core/workspace.ts');
+      const active = await getActiveWorkspace();
+      if (!active) {
+        // Auto-init: no workspace exists → check env vars or prompt for key
+        await runAutoInit();
+      }
       const { startRepl } = await import('./channels/cli/repl.ts');
       const flags = parseFlags(args);
       await startRepl({ skipPermissions: flags.skipPermissions });

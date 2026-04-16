@@ -46,6 +46,49 @@ function isOfficialHost(provider: string, baseUrl: string | undefined): boolean 
 const MIN_CUSTOM_KEY_LEN = 1;
 const MAX_KEY_LEN = 512;
 
+export interface DetectedProvider {
+  provider: string;
+  kind: 'anthropic' | 'openai-compat';
+  defaultModel: string;
+  defaultEndpoint?: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom';
+  defaultBaseUrl?: string;
+}
+
+/**
+ * Auto-detect provider from API key prefix.
+ * Returns null when the key doesn't match any known prefix and the user should be asked.
+ *
+ * Prefix table:
+ *   sk-ant-*   → anthropic / claude-sonnet-4-6
+ *   sk-proj-*  → openai / gpt-4o-mini
+ *   sk-*       → openai / gpt-4o-mini
+ *   gsk_*      → groq  / llama-3.3-70b-versatile  (endpoint: groq)
+ *   null       → unknown (ask user)
+ */
+export function detectProviderFromKey(key: string): DetectedProvider | null {
+  if (key.startsWith('sk-ant-')) {
+    return { provider: 'anthropic', kind: 'anthropic', defaultModel: 'claude-sonnet-4-6' };
+  }
+  if (key.startsWith('sk-proj-') || key.startsWith('sk-')) {
+    return {
+      provider: 'openai',
+      kind: 'openai-compat',
+      defaultModel: 'gpt-4o-mini',
+      defaultEndpoint: 'openai',
+    };
+  }
+  if (key.startsWith('gsk_')) {
+    return {
+      provider: 'groq',
+      kind: 'openai-compat',
+      defaultModel: 'llama-3.3-70b-versatile',
+      defaultEndpoint: 'groq',
+      defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    };
+  }
+  return null;
+}
+
 export function validateKeyFormat(
   provider: string,
   key: string,

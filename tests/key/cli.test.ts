@@ -148,7 +148,7 @@ describe('SPEC-902 #6: key set --base-url cross-kind workspace align', () => {
     expect(out.captured).not.toContain('switching workspace');
   });
 
-  test('openai-compat-kind workspace + key set openai (no --base-url) → workspace untouched', async () => {
+  test('openai-compat-kind workspace + key set openai (no --base-url) → workspace untouched (same kind)', async () => {
     await runInit({
       noPrompt: true,
       output: sinkOutput(),
@@ -167,9 +167,83 @@ describe('SPEC-902 #6: key set --base-url cross-kind workspace align', () => {
       output: out,
     });
     const reloaded = await loadWorkspace(active!.id);
-    // No --base-url → workspace.json untouched, vault holds the key only.
+    // No --base-url + same kind → workspace.json baseUrl untouched, vault holds the key only.
     expect(reloaded.meta.defaultBaseUrl).toBe(before);
     expect(out.captured).not.toContain('aligned: baseUrl');
+    // No kind switch notice either (already openai-compat)
+    expect(out.captured).not.toContain('workspace provider:');
+  });
+
+  test('anthropic-kind workspace + key set openai (no --base-url) → flips provider to openai-compat', async () => {
+    await runInit({
+      noPrompt: true,
+      output: sinkOutput(),
+      skipKeyStep: true,
+      answers: { workspaceName: 'flipkind', provider: 'anthropic' },
+    });
+    const active = await getActiveWorkspace();
+    expect(active!.defaultProvider).toBe('anthropic');
+
+    const out = sinkOutput();
+    const manager = createKeyManager({ secretStore: await getBest() });
+    const code = await runKeyCli({
+      argv: ['set', 'openai', '--key-stdin'],
+      manager,
+      input: stdinFrom('sk-' + 'C'.repeat(40)),
+      output: out,
+    });
+    expect(code).toBe(0);
+    const reloaded = await loadWorkspace(active!.id);
+    expect(reloaded.meta.defaultProvider).toBe('openai-compat');
+    expect(reloaded.meta.defaultModel).toBe('gpt-4o-mini');
+    expect(out.captured).toContain('→ workspace provider: anthropic → openai-compat');
+  });
+
+  test('openai-compat-kind workspace + key set anthropic (no --base-url) → flips provider to anthropic', async () => {
+    await runInit({
+      noPrompt: true,
+      output: sinkOutput(),
+      skipKeyStep: true,
+      answers: { workspaceName: 'flipback', provider: 'openai' },
+    });
+    const active = await getActiveWorkspace();
+    expect(active!.defaultProvider).toBe('openai-compat');
+
+    const out = sinkOutput();
+    const manager = createKeyManager({ secretStore: await getBest() });
+    await runKeyCli({
+      argv: ['set', 'anthropic', '--key-stdin'],
+      manager,
+      input: stdinFrom('sk-ant-' + 'D'.repeat(40)),
+      output: out,
+    });
+    const reloaded = await loadWorkspace(active!.id);
+    expect(reloaded.meta.defaultProvider).toBe('anthropic');
+    expect(reloaded.meta.defaultModel).toBe('claude-sonnet-4-6');
+    expect(out.captured).toContain('→ workspace provider: openai-compat → anthropic');
+  });
+
+  test('anthropic-kind workspace + key set groq (no --base-url) → flips to openai-compat with groq defaults', async () => {
+    await runInit({
+      noPrompt: true,
+      output: sinkOutput(),
+      skipKeyStep: true,
+      answers: { workspaceName: 'groqflip', provider: 'anthropic' },
+    });
+    const active = await getActiveWorkspace();
+
+    const out = sinkOutput();
+    const manager = createKeyManager({ secretStore: await getBest() });
+    await runKeyCli({
+      argv: ['set', 'groq', '--key-stdin'],
+      manager,
+      input: stdinFrom('gsk_' + 'E'.repeat(40)),
+      output: out,
+    });
+    const reloaded = await loadWorkspace(active!.id);
+    expect(reloaded.meta.defaultProvider).toBe('openai-compat');
+    expect(reloaded.meta.defaultModel).toBe('llama-3.3-70b-versatile');
+    expect(out.captured).toContain('→ workspace provider: anthropic → openai-compat');
   });
 
   test('idempotent: re-running same `key set --base-url` does not re-emit kind-switch notice', async () => {
