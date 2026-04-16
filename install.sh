@@ -479,26 +479,26 @@ print_success() {
   printf "    %bnimbus%b                                  # Start chatting\n" "$CYAN" "$RESET"
   printf "\n"
 
-  # CRITICAL: bash/zsh caches command→path mappings in the hash table. That cache
-  # persists across terminal sessions until manually cleared. Even if we did
-  # NOT remove any binary in THIS run, the user's shell may still have a stale
-  # entry from a PREVIOUS install. Showing the reminder unconditionally is
-  # cheap and idempotent — running `hash -r` on a clean hash is a no-op.
-  warn "IMPORTANT — activate nimbus in your current shell. Run this now:"
-  printf "    %bhash -r%b               # clear bash/zsh command cache\n" "$CYAN" "$RESET"
-  printf "    %bnimbus --version%b     # should print %s\n" "$CYAN" "$RESET" "$NIMBUS_VERSION"
-  printf "  Or open a new terminal — new shells read PATH fresh.\n\n"
-
-  # Check if INSTALL_DIR is already on PATH (current process)
-  case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*)
-      info "PATH already includes ${INSTALL_DIR}."
-      ;;
-    *)
-      warn "PATH does NOT yet include ${INSTALL_DIR}. Run:"
-      printf "    %bsource %s%b\n" "$CYAN" "$CHOSEN_RC" "$RESET"
-      ;;
-  esac
+  # CRITICAL FOR USER — can't escape this section:
+  #
+  # Your INTERACTIVE shell (the one you typed `curl | sh` in) didn't inherit:
+  #   1. The PATH entry we just added to your shell rc file (bashrc/zshrc).
+  #   2. A clean command hash table (if you previously had nimbus installed
+  #      elsewhere, bash cached the old path).
+  #
+  # Our subshell can't modify your parent shell. Two options — pick one:
+  printf "%b%s%b\n" "$RED$BOLD" "╔═══════════════════════════════════════════════════════════════╗" "$RESET"
+  printf "%b%s%b\n" "$RED$BOLD" "║  ⚠  ACTION REQUIRED — run ONE of these to start using nimbus ║" "$RESET"
+  printf "%b%s%b\n" "$RED$BOLD" "╚═══════════════════════════════════════════════════════════════╝" "$RESET"
+  printf "\n"
+  printf "  %bOption 1 — open a new terminal%b (simplest, always works)\n" "$BOLD" "$RESET"
+  printf "\n"
+  printf "  %bOption 2 — reload your current shell:%b\n" "$BOLD" "$RESET"
+  printf "    %bsource %s && hash -r%b\n" "$CYAN" "$CHOSEN_RC" "$RESET"
+  printf "\n"
+  printf "  Then:\n"
+  printf "    %bnimbus --version%b   # should print nimbus-os %s\n" "$CYAN" "$RESET" "$NIMBUS_VERSION"
+  printf "\n"
 
   printf "\n"
   printf "  Learn more: %b%s%b\n" "$CYAN" "$LEARN_URL" "$RESET"
