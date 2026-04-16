@@ -66,7 +66,7 @@ function parseFlags(rest: string[]): ParsedFlags {
 async function runAutoInit(): Promise<void> {
   const { detectEnvKey, quickInit } = await import('./onboard/init.ts');
   const { detectProviderFromKey } = await import('./onboard/keyValidators.ts');
-  const { readKeyFromStdin } = await import('./onboard/keyPrompt.ts');
+  const { promptApiKey, readKeyFromStdin } = await import('./onboard/keyPrompt.ts');
 
   const envFound = detectEnvKey();
   if (envFound) {
@@ -89,11 +89,24 @@ async function runAutoInit(): Promise<void> {
   let detectedProvider;
 
   if (isTTY) {
-    process.stdout.write(`  Paste your API key (Anthropic, OpenAI, or Groq): `);
+    try {
+      // Use promptApiKey on TTY — it resolves on \r/\n properly.
+      // BUG v0.2.3: readKeyFromStdin was used here; it only resolves on stdin 'end',
+      // which a TTY never emits → CLI hung forever after paste.
+      key = await promptApiKey({
+        provider: 'detected',
+        prompt: '  Paste your API key (Anthropic, OpenAI, or Groq): ',
+        input: process.stdin as NodeJS.ReadStream,
+      });
+    } catch (err) {
+      const { logger } = await import('./observability/logger.ts');
+      logger.debug({ err: (err as Error).message }, 'auto_init_prompt_failed');
+    }
+  } else {
     try {
       key = await readKeyFromStdin(process.stdin as NodeJS.ReadStream);
     } catch {
-      // non-interactive fallback
+      // piped empty stdin — fall through
     }
   }
 
@@ -122,7 +135,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.2.3-alpha\n');
+      process.stdout.write('nimbus-os 0.2.4-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -177,7 +190,7 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.2.3-alpha';
+        const current = '0.2.4-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);

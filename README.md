@@ -83,9 +83,42 @@ Spec-level detail:
 
 ## Install & quick start
 
+### One-line install (Linux / macOS)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/0xsyncroot/nimbus-os/main/install.sh | sh
+```
+
+The installer:
+
+1. Detects your OS + architecture (`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`)
+2. Downloads the latest pre-built binary from the [Releases page](https://github.com/0xsyncroot/nimbus-os/releases)
+3. Verifies the SHA256 checksum (when `SHA256SUMS` is published)
+4. Installs to `~/.nimbus/bin/nimbus`
+5. Adds `~/.nimbus/bin` to your shell's PATH (`~/.bashrc`, `~/.zshrc`, or fish config)
+
+After install, restart your shell (or `source ~/.bashrc`) then:
+
+```sh
+nimbus init          # interactive wizard: workspace, SOUL, API key
+nimbus               # start chatting
+```
+
+**Options**
+
+```sh
+# Auto-confirm all prompts (CI / scripted installs)
+curl -fsSL https://raw.githubusercontent.com/0xsyncroot/nimbus-os/main/install.sh | sh -s -- -y
+
+# Uninstall
+sh install.sh --uninstall
+```
+
+**Windows**: use the [Releases page](https://github.com/0xsyncroot/nimbus-os/releases) to
+download `nimbus-windows-x64.exe`, or install via Scoop / Chocolatey (coming soon).
+
 ### Prerequisites
 
-- [Bun](https://bun.sh) ≥ 1.2 — `curl -fsSL https://bun.sh/install | bash`
 - An API key from any supported provider *(skip if using local Ollama / vLLM)*
 
 ### From source
@@ -98,7 +131,9 @@ bun run start init       # wizard: name, provider, model
 bun run start            # enter REPL
 ```
 
-### Compiled binary
+> **Requires** [Bun](https://bun.sh) ≥ 1.2 — `curl -fsSL https://bun.sh/install | bash`
+
+### Compiled binary (manual)
 
 Pre-built binaries for Linux, macOS, and Windows are attached to every release
 on the [Releases page](https://github.com/0xsyncroot/nimbus-os/releases).

@@ -2,6 +2,19 @@
 
 All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **`install.sh`** — one-shot POSIX installer (`curl -fsSL …/install.sh | sh`).
+  Detects OS + arch (linux-x64, linux-arm64, darwin-x64, darwin-arm64), fetches
+  the latest GitHub release binary, verifies SHA256SUMS when available, installs
+  to `~/.nimbus/bin/nimbus`, and adds PATH to bashrc/zshrc/fish config.
+  Supports `-y`/`--force` for non-interactive CI installs and `--uninstall` for
+  clean removal. POSIX sh — works on dash, bash, zsh.
+- README "Install" section updated with one-line `curl | sh` command, options
+  table, and Windows note.
+
 ## [0.2.3-alpha] — 2026-04-16
 
 ### Fixed
