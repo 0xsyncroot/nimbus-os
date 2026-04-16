@@ -60,8 +60,8 @@ export interface DetectedProvider {
  *
  * Prefix table:
  *   sk-ant-*   → anthropic / claude-sonnet-4-6
- *   sk-proj-*  → openai / gpt-4o-mini
- *   sk-*       → openai / gpt-4o-mini
+ *   sk-proj-*  → openai / gpt-5.4-mini
+ *   sk-*       → openai / gpt-5.4-mini
  *   gsk_*      → groq  / llama-3.3-70b-versatile  (endpoint: groq)
  *   null       → unknown (ask user)
  */
@@ -73,7 +73,7 @@ export function detectProviderFromKey(key: string): DetectedProvider | null {
     return {
       provider: 'openai',
       kind: 'openai-compat',
-      defaultModel: 'gpt-4o-mini',
+      defaultModel: 'gpt-5.4-mini',
       defaultEndpoint: 'openai',
     };
   }

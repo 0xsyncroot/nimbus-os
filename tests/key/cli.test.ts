@@ -195,7 +195,7 @@ describe('SPEC-902 #6: key set --base-url cross-kind workspace align', () => {
     expect(code).toBe(0);
     const reloaded = await loadWorkspace(active!.id);
     expect(reloaded.meta.defaultProvider).toBe('openai-compat');
-    expect(reloaded.meta.defaultModel).toBe('gpt-4o-mini');
+    expect(reloaded.meta.defaultModel).toBe('gpt-5.4-mini');
     expect(out.captured).toContain('→ workspace provider: anthropic → openai-compat');
   });
 

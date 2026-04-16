@@ -331,8 +331,8 @@ function resolveModelName(
   }
   if (provider === 'openai') {
     if (klass === 'flagship') return 'gpt-4o';
-    if (klass === 'budget') return 'gpt-4o-mini';
-    return 'gpt-4o';
+    if (klass === 'budget') return 'gpt-5.4-mini';
+    return 'gpt-5.4-mini';
   }
   if (provider === 'groq') return 'llama-3.3-70b-versatile';
   if (provider === 'deepseek') return 'deepseek-chat';

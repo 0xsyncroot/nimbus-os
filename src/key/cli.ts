@@ -124,7 +124,7 @@ function workspaceKindFor(provider: string): 'anthropic' | 'openai-compat' {
 
 const DEFAULT_MODELS: Record<string, string> = {
   anthropic: 'claude-sonnet-4-6',
-  openai: 'gpt-4o-mini',
+  openai: 'gpt-5.4-mini',
   groq: 'llama-3.3-70b-versatile',
   deepseek: 'deepseek-chat',
   ollama: 'llama3.2',
