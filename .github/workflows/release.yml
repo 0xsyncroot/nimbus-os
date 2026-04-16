@@ -104,6 +104,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Type-check
+        run: bun run typecheck
+
+      - name: Test (must pass before publish)
+        run: bun test
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

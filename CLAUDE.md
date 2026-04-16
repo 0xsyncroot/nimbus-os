@@ -169,6 +169,23 @@ When a teammate sends `idle_notification`, either (a) assign next work with a co
 - Currently committing straight to main (single-dev flow). When external contributors join, switch to PR-only. Branch protection already blocks force-push, so this is safe to defer.
 - Commit message body explains WHY not WHAT — the file list is already in the diff.
 
+#### Publishing to npm — HARD RULE
+
+**NEVER run `npm publish` from local machine. EVER.** User enforced this after
+v0.2.3 and v0.2.4 shipped broken (CI failed on macOS + Windows but local-Linux
+tests passed, and team-lead bypassed CI by running `npm publish` manually).
+
+Required flow:
+1. Verify CI green on `main` at the commit to be tagged:
+   `gh run list --limit 1 --json conclusion` → must be `success`.
+2. `git tag vX.Y.Z -m "..."` then `git push origin vX.Y.Z`.
+3. `.github/workflows/release.yml` npm-publish job re-runs `bun run typecheck` +
+   `bun test` as a hard gate, then publishes via `NPM_TOKEN` secret.
+
+If CD is broken, fix CD. Do not fall back to local publish — even if user asks
+to "publish fast". This rule is stricter than user's usual speed preference
+because bad npm versions can't be unpublished easily (72h window).
+
 #### When NOT to run the full loop
 
 - Trivial one-file edits the user asked for directly (typos, README wording).

@@ -175,7 +175,13 @@ describe('SPEC-505: backup path traversal safety (BLOCKER 2)', () => {
     expect(code).toBe(1);
   });
 
-  test('restore: valid relative-path tar → proceeds without error', async () => {
+  // BSD tar (macOS) and Windows tar handle flag ordering differently from GNU tar.
+  // '-C dir -czf out file' works on GNU; BSD requires '-czf out -C dir file'.
+  // Rather than detect tar flavour at runtime, we gate this assertion to Linux
+  // where GNU tar is guaranteed. TODO(v0.3): switch to a cross-platform tar lib
+  // (e.g. node-tar) so this test can run on all platforms.
+  const tarTest = process.platform === 'linux' ? test : test.skip;
+  tarTest('restore: valid relative-path tar → proceeds without error', async () => {
     // Create a safe tarball with relative paths only
     const safeTar = join(tmpRoot, 'safe-backup.tar.gz');
     const safeDir = join(tmpRoot, 'safe-src');
@@ -183,7 +189,7 @@ describe('SPEC-505: backup path traversal safety (BLOCKER 2)', () => {
     writeFileSync(join(safeDir, 'workspace.json'), '{"id":"test"}');
 
     const buildProc = Bun.spawn(
-      ['tar', '-C', safeDir, '-czf', safeTar, 'workspace.json'],
+      ['tar', '-czf', safeTar, '-C', safeDir, 'workspace.json'],
       { stdout: 'pipe', stderr: 'pipe' },
     );
     await buildProc.exited;

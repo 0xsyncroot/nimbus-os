@@ -96,8 +96,10 @@ async function runBackupCreate(outFile?: string, includePlaintext = false): Prom
     return 1;
   }
 
-  // BLOCKER 2: Use -C <home> + relative paths to prevent tar path traversal on create
-  const tarArgs = ['-C', home, '-czf', out, ...relEntries];
+  // BLOCKER 2: Use -C <home> + relative paths to prevent tar path traversal on create.
+  // Arg order matters: GNU tar accepts '-C dir -czf out files'; BSD tar (macOS) and
+  // Windows tar require '-czf out -C dir files'. Use BSD-compatible order everywhere.
+  const tarArgs = ['-czf', out, '-C', home, ...relEntries];
   const proc = Bun.spawn(['tar', ...tarArgs], {
     stdout: 'pipe',
     stderr: 'pipe',
@@ -173,16 +175,15 @@ async function runBackupRestore(file: string): Promise<number> {
   }
 
   // Extract to temp dir first to verify.
-  // BLOCKER 2: defence-in-depth — GNU tar strips leading '/' by default;
-  // BSD/macOS tar accepts --no-absolute-names. We pass it only on non-Linux.
-  // The pre-scan above is the primary guard; this is belt-and-suspenders.
+  // BLOCKER 2: defence-in-depth — the pre-scan above is the primary guard against
+  // absolute-path entries. We do NOT pass --no-absolute-names here because it is
+  // GNU-tar-only and is absent from BSD tar (macOS), BusyBox tar (Alpine/WSL2),
+  // and Windows tar. The -C <tmpdir> flag alone ensures any relative paths land
+  // safely under our temp directory.
   const tmp = join(tmpdir(), `nimbus-restore-${Date.now()}`);
   await mkdir(tmp, { recursive: true });
 
   const extractArgs = ['tar', '-xzf', file, '-C', tmp];
-  if (process.platform !== 'linux') {
-    extractArgs.push('--no-absolute-names');
-  }
   const proc = Bun.spawn(extractArgs, {
     stdout: 'pipe',
     stderr: 'pipe',
