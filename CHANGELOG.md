@@ -4,6 +4,29 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.2.8-alpha] — 2026-04-16
+
+### Fixed
+
+- **Streaming blank-screen (Fix 1)** — assistant text deltas are now written to stdout
+  immediately as they arrive (`output.write(ch.delta.text)` inline in the chunk handler)
+  so the user sees output character-by-character. On `message_stop`, if the buffered text
+  contains Markdown syntax *and* the output is a TTY, the renderer cursor-ups the streamed
+  lines (`\x1b[NF\x1b[J`) and re-emits the full buffer through `renderMarkdown()` for styled
+  ANSI output. Non-TTY or plain-text output just appends a trailing newline — no re-render,
+  no escape sequences. Helper `countNewlines()` tracks newlines streamed so the cursor-up
+  count is exact.
+- **[PLAN] echo suppressed (Fix 2)** — `plan_announce` and `spec_announce` events no longer
+  write anything to stdout. The model still receives the full `[INTERNAL_PLAN]` block via the
+  system prompt (SPEC-105 extension, v0.2.7). User-visible pre-announcement was noise.
+  Both event handlers now emit a `logger.debug` line for audit only.
+
+### Changed
+
+- `createRenderer()` now accepts either the legacy `(s: string) => void` write function **or**
+  a new `RendererOutput` object `{ write, isTTY? }` so tests can inject a mock stream with
+  `isTTY` control without touching `process.stdout`.
+
 ## [0.2.7-alpha] — 2026-04-16
 
 ### Added
