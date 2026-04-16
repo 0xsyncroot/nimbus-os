@@ -31,6 +31,7 @@ import { handleModelPicker } from './modelPicker.ts';
 import { wireBusSubscribers } from './subscriptions.ts';
 import { setTelegramRuntimeBridge } from '../../tools/builtin/Telegram.ts';
 import { getChannelRuntime } from '../runtime.ts';
+import { formatBootError } from './errorFormatCli.ts';
 
 export interface ReplOptions {
   workspaceId?: string;
@@ -140,12 +141,30 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   // Fix 1a — auto-provision vault passphrase on REPL boot so vault decrypt works
   // without requiring the user to re-run init. No-op if already provisioned or no
   // workspace yet (runAutoInit will call it on its own path).
+  //
+  // v0.3.7 URGENT FIX — if autoProvisionPassphrase raises X_CRED_ACCESS /
+  // vault_locked (new guard for "vault exists but passphrase unavailable"),
+  // surface the friendly hint NOW instead of waiting for the first chat turn
+  // to fail with U_MISSING_CONFIG. The REPL still enters so the user can type
+  // `/help`, pick a different workspace, etc.; their chat will produce the
+  // same friendly message at turn time.
   {
     const { autoProvisionPassphrase } = await import('../../platform/secrets/fileFallback.ts');
     try {
       await autoProvisionPassphrase();
-    } catch {
-      // no-op: workspace may not exist yet (runAutoInit path will call it)
+    } catch (err) {
+      if (err instanceof NimbusError && err.code === ErrorCode.X_CRED_ACCESS) {
+        const formatted = formatBootError(
+          { code: err.code, context: err.context },
+          'vi',
+        );
+        write(`${colors.warn(prefixes.warn)} ${formatted.line}\n`);
+        if (formatted.hint) {
+          write(`${colors.dim(`  → ${formatted.hint}`)}\n`);
+        }
+      }
+      // Other errors (no workspace yet, etc.) — silently continue;
+      // runAutoInit will handle them on its own path.
     }
   }
 
@@ -640,10 +659,23 @@ async function runSingleTurn(
     provider = await lazyProvider(state);
   } catch (err) {
     if (err instanceof NimbusError) {
-      write(`${colors.err(prefixes.err)} ${err.code}: ${JSON.stringify(err.context)}\n`);
-      if (err.context['reason'] === 'ANTHROPIC_API_KEY missing') {
-        write(`${colors.dim('hint: export ANTHROPIC_API_KEY=... before starting nimbus.')}\n`);
+      // v0.3.7 URGENT FIX — replace raw JSON dump with a friendly sentence +
+      // explicit recovery hint. Users who saw `U_MISSING_CONFIG: {...}` in
+      // v0.3.6 after a binary upgrade had no idea what to do next.
+      const formatted = formatBootError(
+        { code: err.code, context: err.context },
+        'vi',
+      );
+      write(`${colors.err(prefixes.err)} ${formatted.line}\n`);
+      if (formatted.hint) {
+        write(`${colors.dim(`  → ${formatted.hint}`)}\n`);
       }
+      // Log the machine-readable form for support triage; does NOT echo secrets
+      // because NimbusError.context is structured, never a raw API key.
+      logger.warn(
+        { code: err.code, context: err.context },
+        'provider init failed',
+      );
     } else {
       write(`${colors.err(prefixes.err)} ${(err as Error).message}\n`);
     }

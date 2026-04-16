@@ -98,11 +98,25 @@ export function formatError(err: NimbusError): FormattedError {
         action: 'The path is outside allowed directories. Check your workspace configuration.',
       };
 
-    case ErrorCode.X_CRED_ACCESS:
+    case ErrorCode.X_CRED_ACCESS: {
+      // v0.3.7 URGENT FIX — new sub-reason `vault_locked` raised by
+      // autoProvisionPassphrase when a vault exists but no usable passphrase
+      // source is available. The hint comes with a concrete command.
+      const reason = err.context['reason'];
+      if (reason === 'vault_locked') {
+        const hint = typeof err.context['hint'] === 'string' ? (err.context['hint'] as string) : null;
+        return {
+          summary: 'Stored keys cannot be unlocked with the current passphrase.',
+          action: hint
+            ? `Fix: ${hint}`
+            : 'Fix: restore your previous NIMBUS_VAULT_PASSPHRASE, or run `nimbus vault reset` (old vault backed up).',
+        };
+      }
       return {
         summary: 'Credential access failed.',
         action: 'Your vault may be corrupted or the passphrase changed. Run `nimbus key set` again.',
       };
+    }
 
     case ErrorCode.S_CONFIG_INVALID: {
       const reason = err.context['reason'];

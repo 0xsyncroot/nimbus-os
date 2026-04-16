@@ -223,7 +223,7 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.3.6-alpha';
+        const current = '0.3.7-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);

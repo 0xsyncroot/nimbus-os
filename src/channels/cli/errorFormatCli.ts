@@ -79,3 +79,87 @@ export function formatToolError(err: ErrInput, locale: Locale): string {
     ? `Tool failed (${err.code}) — step did not complete.`
     : 'Tool failed — step did not complete.';
 }
+
+/**
+ * Format a REPL-level startup/boot error into a friendly message + recovery
+ * hint. Used by runSingleTurn when provider init fails with U_MISSING_CONFIG,
+ * X_CRED_ACCESS, or similar vault/key issues. The hint field comes from the
+ * thrower; we intentionally surface it because it already tells the user the
+ * exact command to run (`nimbus key set openai`, `nimbus vault reset`, ...).
+ * Never echoes the full raw JSON context.
+ */
+export function formatBootError(err: ErrInput, locale: Locale): { line: string; hint: string | null } {
+  const ctx = err.context ?? {};
+  const reason = safeStr(ctx['reason']);
+  const hint = safeStr(ctx['hint']) || null;
+  const provider = safeStr(ctx['provider']);
+  const baseCode = err.code.split(':')[0] ?? err.code;
+
+  if (locale === 'vi') {
+    if (baseCode === 'U_MISSING_CONFIG') {
+      if (reason === 'provider_key_missing' || reason === 'key_ref_unresolved') {
+        const who = provider ? `cho ${provider}` : '';
+        return {
+          line: `Chưa có API key ${who}đê em chat được.`.replace(/  +/g, ' ').trim(),
+          hint,
+        };
+      }
+      if (reason === 'no_active_workspace') {
+        return { line: 'Chưa có workspace — anh chạy `nimbus init` trước nhé.', hint };
+      }
+      if (reason === 'missing_passphrase') {
+        return {
+          line: 'Vault đang khoá — chưa có passphrase để mở key đã lưu.',
+          hint: hint ?? 'set NIMBUS_VAULT_PASSPHRASE hoặc chạy `nimbus vault reset`',
+        };
+      }
+      return { line: 'Thiếu cấu hình để khởi động.', hint };
+    }
+    if (baseCode === 'X_CRED_ACCESS') {
+      if (reason === 'vault_locked' || reason === 'tag_verify_fail') {
+        return {
+          line: 'Key đã lưu trước đây không mở được bằng passphrase hiện tại (có thể sau khi upgrade binary).',
+          hint: hint ?? 'khôi phục NIMBUS_VAULT_PASSPHRASE cũ, hoặc chạy `nimbus vault reset` để nhập lại key (vault cũ sẽ được backup)',
+        };
+      }
+      return { line: 'Không truy cập được vault chứa key.', hint };
+    }
+    if (baseCode === 'P_AUTH') {
+      return { line: 'Provider không chấp nhận API key — kiểm tra lại key đã nhập.', hint };
+    }
+    return { line: `Không khởi động được provider (${baseCode}).`, hint };
+  }
+
+  // English
+  if (baseCode === 'U_MISSING_CONFIG') {
+    if (reason === 'provider_key_missing' || reason === 'key_ref_unresolved') {
+      return {
+        line: `No API key${provider ? ` for ${provider}` : ''} is configured.`,
+        hint,
+      };
+    }
+    if (reason === 'no_active_workspace') {
+      return { line: 'No active workspace — run `nimbus init` first.', hint };
+    }
+    if (reason === 'missing_passphrase') {
+      return {
+        line: 'Vault is locked — no passphrase available to unlock stored keys.',
+        hint: hint ?? 'set NIMBUS_VAULT_PASSPHRASE or run `nimbus vault reset`',
+      };
+    }
+    return { line: 'Missing configuration to start.', hint };
+  }
+  if (baseCode === 'X_CRED_ACCESS') {
+    if (reason === 'vault_locked' || reason === 'tag_verify_fail') {
+      return {
+        line: 'Stored keys cannot be unlocked with the current passphrase (often after a binary upgrade).',
+        hint: hint ?? 'restore your previous NIMBUS_VAULT_PASSPHRASE, or run `nimbus vault reset` to re-enter the key (old vault is backed up)',
+      };
+    }
+    return { line: 'Could not access the key vault.', hint };
+  }
+  if (baseCode === 'P_AUTH') {
+    return { line: 'Provider rejected the API key — please verify it.', hint };
+  }
+  return { line: `Could not start provider (${baseCode}).`, hint };
+}

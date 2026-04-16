@@ -215,6 +215,12 @@ async function handleList(
   manager: KeyManager,
   output: NodeJS.WritableStream,
 ): Promise<number> {
+  // v0.3.7 URGENT FIX — without this, `nimbus key list` on a workspace whose
+  // passphrase lives in ~/.nimbus/.vault-key (auto-generated on first run)
+  // fails with "no encryption passphrase available" because getPassphrase()
+  // only reads the env var. autoProvisionPassphrase sets the in-memory
+  // provisioned passphrase from env/keychain/file, fully covering the chain.
+  await autoProvisionPassphrase({ output });
   const entries = await manager.list();
   if (entries.length === 0) {
     output.write('  no keys configured\n');
@@ -232,6 +238,7 @@ async function handleDelete(
   args: string[],
   output: NodeJS.WritableStream,
 ): Promise<number> {
+  await autoProvisionPassphrase({ output });
   let provider: string | undefined;
   let yes = false;
   for (const a of args) {
@@ -257,6 +264,7 @@ async function handleTest(
   args: string[],
   output: NodeJS.WritableStream,
 ): Promise<number> {
+  await autoProvisionPassphrase({ output });
   const provider = args.find((a) => !a.startsWith('--'));
   if (!provider) {
     throw new NimbusError(ErrorCode.U_BAD_COMMAND, { reason: 'missing_provider' });

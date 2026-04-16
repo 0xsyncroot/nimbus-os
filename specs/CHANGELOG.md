@@ -2,6 +2,38 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-16 — v0.3.7-alpha URGENT: binary-upgrade silently locks existing vault
+
+- @hiepht: **Bug V1 (SPEC-152 / SPEC-901 v0.2.1 hardening)** —
+  `autoProvisionPassphrase` used to auto-generate a random passphrase and
+  write it to `~/.nimbus/.vault-key` whenever no passphrase source was
+  available, even if an encrypted vault already existed. On binary upgrade
+  (user had set `NIMBUS_VAULT_PASSPHRASE` in v0.3.4, opened a new shell
+  without it on v0.3.6), this permanently masked the correct passphrase.
+  Decision: autoProvision is now vault-aware — it probes the candidate
+  passphrase against the existing envelope before accepting, and raises
+  `X_CRED_ACCESS / vault_locked` rather than silently generating. First-run
+  path (no vault yet) unchanged. Trade-off: users who legitimately lost the
+  passphrase are blocked by the guard until they run `nimbus vault reset`,
+  which backs up the old vault to `secrets.broken-<ts>.enc` and
+  re-provisions. This is the correct safety default — we cannot silently
+  destroy user key material.
+- @hiepht: **Bug V2 (SPEC-902)** — `resolveProviderKey` swallowed every
+  secret-store error with a bare `try/catch`, masking wrong-passphrase
+  failures as `U_MISSING_CONFIG: provider_key_missing`. Decision: only
+  `T_NOT_FOUND` is benign; every other error (including `X_CRED_ACCESS`
+  and `S_STORAGE_CORRUPT`) now propagates so the user sees the real cause.
+- @hiepht: **UX polish (SPEC-826)** — new `formatBootError` maps provider
+  init errors to 1-line VN/EN sentence + `→` hint. Raw JSON context is
+  demoted to `logger.warn` only (no stdout). The REPL pre-warns at boot
+  when `autoProvisionPassphrase` raises `vault_locked` so the user does
+  not have to type a message just to discover the vault is locked.
+- @hiepht: **QA retrospective** — v0.3.6 smoke tests did not exercise the
+  binary + real-vault + real-key upgrade path. Added
+  `tests/e2e/binaryUpgradeSmoke.test.ts` (spawns the compiled binary,
+  replicates the exact user scenario). Rule going forward: every alpha tag
+  must smoke at least one "existing-state + binary swap" scenario.
+
 ## 2026-04-16 — v0.3.4-alpha URGENT: 3 user-caught regressions
 
 - @hiepht: **Bug A (SPEC-826 v0.2)** — `⋯ đang writing {path}` VN/EN hybrid

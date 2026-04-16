@@ -243,6 +243,17 @@ function vaultKeyFilePath(): string {
  *   4. Interactive prompt (only if TTY available)
  *
  * After this call returns, getPassphrase() will succeed without throwing.
+ *
+ * v0.3.7 URGENT FIX — vault-aware guard:
+ * When a vault file ALREADY EXISTS on disk but no passphrase source is
+ * usable (or the available source fails to decrypt the existing vault), we
+ * must NOT auto-generate a fresh random passphrase. Doing so used to clobber
+ * the user's only recovery path (setting NIMBUS_VAULT_PASSPHRASE again), and
+ * caused later provider-key reads to fail with the misleading
+ * `U_MISSING_CONFIG: provider_key_missing` error. Instead we throw
+ * X_CRED_ACCESS / vault_locked with a recovery hint. The REPL maps this to a
+ * friendly message and directs the user to `nimbus vault reset` or to export
+ * their original passphrase.
  */
 export async function autoProvisionPassphrase(
   io?: { input?: NodeJS.ReadableStream; output?: NodeJS.WritableStream },
@@ -250,9 +261,18 @@ export async function autoProvisionPassphrase(
   // 1. Already provisioned this process — skip.
   if (provisionedPassphrase) return;
 
+  const existingVault = await readVaultEnvelopeForProbe();
+
   // 2. Env var takes highest precedence.
   const envPp = process.env['NIMBUS_VAULT_PASSPHRASE'];
   if (envPp) {
+    if (existingVault && !canDecryptVault(existingVault, envPp)) {
+      throw new NimbusError(ErrorCode.X_CRED_ACCESS, {
+        reason: 'vault_locked',
+        source: 'env',
+        hint: 'NIMBUS_VAULT_PASSPHRASE does not match the existing vault; unset it or run `nimbus vault reset`',
+      });
+    }
     provisionedPassphrase = envPp;
     return;
   }
@@ -262,39 +282,74 @@ export async function autoProvisionPassphrase(
     const { getBest } = await import('./index.ts');
     const store = await getBest();
     if (store.backend !== 'file-fallback') {
+      let keychainPp: string | null = null;
       try {
         const stored = await store.get('nimbus-os', 'vault-passphrase');
-        if (stored && stored.length > 0) {
-          provisionedPassphrase = stored;
-          return;
-        }
+        if (stored && stored.length > 0) keychainPp = stored;
       } catch {
-        // Not found in keychain — generate and store.
+        // Not found in keychain — handled below.
+      }
+      if (keychainPp) {
+        if (existingVault && !canDecryptVault(existingVault, keychainPp)) {
+          throw new NimbusError(ErrorCode.X_CRED_ACCESS, {
+            reason: 'vault_locked',
+            source: 'keychain',
+            hint: 'keychain passphrase does not match the existing vault; run `nimbus vault reset` or restore the original passphrase',
+          });
+        }
+        provisionedPassphrase = keychainPp;
+        return;
+      }
+      if (!existingVault) {
+        // First run — it is safe to generate and store a fresh passphrase.
         const generated = randomBytes(32).toString('base64');
         await store.set('nimbus-os', 'vault-passphrase', generated);
         provisionedPassphrase = generated;
         return;
       }
+      // Existing vault, no keychain entry — DO NOT generate. Fall through to
+      // the file/guard logic below which will raise the vault_locked error.
     }
-  } catch {
-    // Keychain unavailable — fall through to file.
+  } catch (err) {
+    if (err instanceof NimbusError && err.code === ErrorCode.X_CRED_ACCESS) throw err;
+    // Keychain otherwise unavailable — fall through to file.
   }
 
   // 4. Try ~/.nimbus/.vault-key file.
   const keyFile = vaultKeyFilePath();
+  let filePp: string | null = null;
   try {
     const contents = await readFile(keyFile, { encoding: 'utf8' });
     const pp = contents.trim();
-    if (pp.length > 0) {
-      provisionedPassphrase = pp;
-      return;
-    }
+    if (pp.length > 0) filePp = pp;
   } catch {
-    // File not found — will create below.
+    // File not found.
+  }
+  if (filePp) {
+    if (existingVault && !canDecryptVault(existingVault, filePp)) {
+      throw new NimbusError(ErrorCode.X_CRED_ACCESS, {
+        reason: 'vault_locked',
+        source: 'vault_key_file',
+        hint: 'the .vault-key file no longer matches the vault; run `nimbus vault reset` to restart (vault will be backed up)',
+      });
+    }
+    provisionedPassphrase = filePp;
+    return;
   }
 
-  // 5. Generate a new passphrase and write to file.
-  // If TTY available, we could prompt — but for a smoother UX, auto-generate silently.
+  // 5. No passphrase source found. If a vault already exists, we MUST NOT
+  //    silently create a new passphrase — that would permanently lock the
+  //    user out. Raise a guided error so the caller can surface the recovery
+  //    flow (`nimbus vault reset` or re-setting NIMBUS_VAULT_PASSPHRASE).
+  if (existingVault) {
+    throw new NimbusError(ErrorCode.X_CRED_ACCESS, {
+      reason: 'vault_locked',
+      source: 'none',
+      hint: 'existing vault found but no passphrase available; set NIMBUS_VAULT_PASSPHRASE or run `nimbus vault reset`',
+    });
+  }
+
+  // 6. First-run path — no vault exists yet. Safe to generate and persist.
   const output = io?.output ?? process.stdout;
   const generated = randomBytes(32).toString('base64');
 
@@ -310,7 +365,7 @@ export async function autoProvisionPassphrase(
     // File write failed — try interactive prompt as last resort.
   }
 
-  // 6. Interactive prompt (last resort — only if TTY).
+  // 7. Interactive prompt (last resort — only if TTY).
   const input = io?.input ?? process.stdin;
   const isTTY = (input as { isTTY?: boolean }).isTTY === true;
   if (isTTY) {
@@ -336,4 +391,39 @@ export async function autoProvisionPassphrase(
 
   // Nothing worked — will throw later when vault is actually used.
   // This avoids a hard failure during init before the key step.
+}
+
+/** Read the vault envelope from disk without decrypting, for probe purposes.
+ *  Returns null if the file is missing. Returns null for corrupt/too-large
+ *  vaults — those cases are surfaced later by diagnoseVault / loadData. */
+async function readVaultEnvelopeForProbe(): Promise<VaultEnvelope | null> {
+  try {
+    const existing = await readVault();
+    return existing?.envelope ?? null;
+  } catch {
+    // Corrupt envelope / too-large — treat as "no usable vault" for the
+    // purposes of the auto-provision guard. Downstream diagnoseVault will
+    // raise the real classification.
+    return null;
+  }
+}
+
+/** Try to decrypt the vault with the given passphrase. Returns true on
+ *  success, false on tag-verify / parse failure. Never throws. */
+function canDecryptVault(envelope: VaultEnvelope, passphrase: string): boolean {
+  try {
+    const salt = Buffer.from(envelope.salt, 'hex');
+    const iv = Buffer.from(envelope.iv, 'hex');
+    const tag = Buffer.from(envelope.tag, 'hex');
+    const ct = Buffer.from(envelope.ciphertext, 'base64');
+    const key = deriveKey(passphrase, salt);
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
+    plain.fill(0);
+    key.fill(0);
+    return true;
+  } catch {
+    return false;
+  }
 }

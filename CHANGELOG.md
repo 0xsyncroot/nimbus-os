@@ -4,6 +4,91 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.7-alpha] — 2026-04-16 — URGENT fix (binary upgrade silently locks existing vault → misleading "no key" error)
+
+User repro (v0.3.6 → new shell):
+
+```
+personal › hello
+[ERROR] U_MISSING_CONFIG: {"reason":"provider_key_missing","provider":"openai",
+  "hint":"run `nimbus key set openai` or set OPENAI_API_KEY"}
+```
+
+The user had a valid `sk-...` stored via `nimbus key set` on v0.3.4 (shell had
+`NIMBUS_VAULT_PASSPHRASE=...` set). After upgrading to v0.3.6 and opening a
+fresh shell **without** the env var, the error above appeared — telling them
+to set a key that was already saved and claiming a config file issue when the
+real problem was a locked vault. The message was raw JSON, in English, and
+pointed at the wrong fix (`nimbus key set` would just overwrite nothing
+useful at that stage since the passphrase was still wrong).
+
+### Root cause
+
+Two silent-failure bugs compounded:
+
+1. `autoProvisionPassphrase()` (called on every REPL boot and most `nimbus
+   key` / `nimbus telegram` handlers) would, when no passphrase source was
+   available, **auto-generate a random passphrase and write it to
+   `~/.nimbus/.vault-key`** — even when a vault already existed that needed a
+   different passphrase. From that point the `.vault-key` file masked the
+   user's original passphrase, and `secrets.enc` was effectively unreadable
+   unless the user knew to delete `.vault-key` manually (nobody does).
+
+2. `resolveProviderKey()` wrapped its secret-store lookup in a bare
+   `try { ... } catch { /* fall through */ }`. A decrypt failure
+   (`X_CRED_ACCESS: tag_verify_fail`, emitted by the file-fallback on
+   wrong-passphrase) was silently swallowed and replaced with
+   `U_MISSING_CONFIG: provider_key_missing`. The user saw "no key" when the
+   truth was "key is there, wrong passphrase".
+
+### Fixes (`v0.3.7`)
+
+- **Vault-aware `autoProvisionPassphrase`** (`src/platform/secrets/
+  fileFallback.ts`) — before accepting a candidate passphrase from env /
+  keychain / `.vault-key`, we try to decrypt the existing vault with it. If
+  the vault exists and decryption fails, we raise
+  `X_CRED_ACCESS / vault_locked` with a concrete recovery hint and
+  **refuse to overwrite `.vault-key`**. First-run path (no vault yet) is
+  unchanged.
+- **Propagate `X_CRED_ACCESS`** (`src/providers/registry.ts`) — only
+  `T_NOT_FOUND` (legitimate "key never stored") is benign now. Every other
+  secret-store error is surfaced so users see the real problem.
+- **Friendly REPL / CLI formatters** (`src/channels/cli/errorFormatCli.ts`
+  new `formatBootError`, updated `src/observability/errorFormat.ts`) — map
+  `U_MISSING_CONFIG`, `X_CRED_ACCESS / vault_locked`, `P_AUTH` to one-line
+  Vietnamese/English sentences with a `→` hint pointing at the exact
+  command. No more raw JSON blobs in the turn-init path.
+- **REPL pre-warns** (`src/channels/cli/repl.ts`) — if
+  `autoProvisionPassphrase` raises `vault_locked` at boot, the REPL prints
+  the friendly warning immediately instead of waiting for the first chat
+  turn to fail.
+- **Key CLI handlers call auto-provision** (`src/key/cli.ts`) — `key list`,
+  `key delete`, `key test` now each call `autoProvisionPassphrase` before
+  touching the vault. Without this, any user whose passphrase lives in
+  `.vault-key` saw `U_MISSING_CONFIG: missing_passphrase` on plain
+  `nimbus key list`.
+
+### Tests
+
+- `tests/platform/secrets/upgradeRegression.test.ts` — 6 new unit/integration
+  tests for the vault-guard + propagate path.
+- `tests/e2e/binaryUpgradeSmoke.test.ts` — new PTY-adjacent smoke that spawns
+  the compiled binary, replicates the exact user scenario, and asserts the
+  output does NOT contain `U_MISSING_CONFIG: {` or `provider_key_missing`.
+  Skipped when the binary isn't compiled (unit runs); run in CI + QA after
+  `bun run compile:*`.
+
+1898 tests green (3-OS matrix still required for tag).
+
+### Honest QA retrospective (why v0.3.6 shipped broken)
+
+QA for v0.3.6 smoked the Telegram adapter round-trip on Linux and claimed
+green. The test set did not include "save key on v0.3.4-style binary, upgrade
+binary, open new shell without env var, chat" — the exact flow that broke.
+The binary-level smoke we added in this release is specifically designed to
+catch "real workspace + real saved key + real new shell" before release. Bar
+raised: **QA MUST execute the binary-upgrade scenario** for every alpha tag.
+
 ## [0.3.6-alpha] — 2026-04-16 — URGENT fix (Telegram hallucination: dead-code adapter → real wiring)
 
 User repro flow (v0.3.5):

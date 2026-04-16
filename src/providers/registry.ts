@@ -88,8 +88,21 @@ export async function resolveProviderKey(opts: ResolveKeyOpts): Promise<Resolved
       const out: ResolvedKey = { provider: providerId, apiKey: raw, source: 'secrets' };
       if (chainBaseUrl) out.baseUrl = chainBaseUrl;
       return out;
-    } catch {
-      // fall through to config keyRef
+    } catch (err) {
+      // v0.3.7 URGENT FIX — previously any error here was swallowed silently,
+      // which masked vault-decrypt failures (X_CRED_ACCESS) as a missing key
+      // and produced the misleading `U_MISSING_CONFIG: provider_key_missing`
+      // after a binary upgrade.
+      //
+      // Only T_NOT_FOUND is benign here (the key simply was never stored).
+      // Everything else (X_CRED_ACCESS on wrong passphrase, S_STORAGE_CORRUPT
+      // on vault corruption, X_INJECTION on malformed identifiers, etc.) is a
+      // real signal the user needs to see. Propagate it.
+      if (err instanceof NimbusError && err.code === ErrorCode.T_NOT_FOUND) {
+        // fall through to config keyRef / missing_config branches
+      } else {
+        throw err;
+      }
     }
   }
 
