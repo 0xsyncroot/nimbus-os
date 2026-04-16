@@ -92,7 +92,30 @@ export function toAnthropicRequest(
     params.tools = req.tools.map((t) => toAnthropicTool(t));
   }
   if (req.temperature !== undefined) params.temperature = req.temperature;
+
+  // SPEC-206 T4 — inject thinking when reasoning is applied.
+  if (req.reasoning?.applied) {
+    const budget = budgetFromEffort(req.reasoning.effort);
+    (params as unknown as Record<string, unknown>).thinking = {
+      type: 'enabled',
+      budget_tokens: budget,
+    };
+  }
+
   return params;
+}
+
+function budgetFromEffort(e: 'minimal' | 'low' | 'medium' | 'high'): number {
+  switch (e) {
+    case 'minimal':
+      return 1024;
+    case 'low':
+      return 2048;
+    case 'high':
+      return 8192;
+    default:
+      return 4096;
+  }
 }
 
 function sysErr(type: string): NimbusError {

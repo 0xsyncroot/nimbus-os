@@ -268,6 +268,15 @@ export async function* streamOpenAICompat(
     params.tools = toOpenAITools(ctx.req.tools);
   }
 
+  // SPEC-206 T4 — reasoning_effort pass-through (OpenAI o-series + gpt-5+).
+  // Silently dropped for non-reasoning models via `applied === false`.
+  if (ctx.req.reasoning?.applied && isReasoningModel(ctx.req.model)) {
+    const effort = ctx.req.reasoning.effort;
+    const mapped: 'low' | 'medium' | 'high' =
+      effort === 'high' ? 'high' : effort === 'minimal' || effort === 'low' ? 'low' : 'medium';
+    (params as unknown as Record<string, unknown>).reasoning_effort = mapped;
+  }
+
   let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
   try {
     stream = await ctx.client.chat.completions.create(params, {

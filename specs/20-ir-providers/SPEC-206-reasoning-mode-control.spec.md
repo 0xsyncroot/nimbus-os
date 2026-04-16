@@ -1,7 +1,7 @@
 ---
 id: SPEC-206
 title: Reasoning mode control (v0.1 subset)
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-15
@@ -12,6 +12,7 @@ depends_on: [SPEC-108, SPEC-202, SPEC-203, SPEC-102]
 blocks: []
 estimated_loc: 80
 files_touched:
+  - src/ir/types.ts
   - src/providers/reasoningResolver.ts
   - src/providers/reasoningCue.ts
   - src/channels/cli/slashCommands.ts
@@ -19,6 +20,8 @@ files_touched:
   - src/providers/openaiCompat.ts
   - tests/providers/reasoningResolver.test.ts
   - tests/providers/reasoningCue.test.ts
+  - tests/providers/thinkingHook.test.ts
+  - tests/channels/thinkingSlash.test.ts
 ---
 
 # Reasoning Mode Control (v0.1 Subset)
@@ -154,3 +157,4 @@ export function toOpenAIReasoningEffort(r: ResolvedReasoning):
 ## 10. Changelog
 
 - 2026-04-15 @hiepht: draft v0.1 subset (regen per #44); cue+resolver+/thinking+drop; SPEC-207 deferred v0.2
+- 2026-04-15 @hiepht: v0.1 core implemented (Task #37). `reasoningCue.ts` (EN+VN phrases + word boundaries + `<tool_output>` strip), `reasoningResolver.ts` (`isReasoningCapable` regex+curated, `resolveReasoning` precedence session>cue>default-medium, `toAnthropicThinking`/`toOpenAIReasoningEffort` param mappers + `parseThinkingArg`), `/thinking` slash wired into SPEC-801 registry with `U_BAD_COMMAND` on invalid arg, adapter hooks in `anthropic.ts` (thinking+budget) and `openaiCompat.ts` (reasoning_effort, double-gated by `isReasoningModel`). `CanonicalRequest.reasoning?` field added (v0.1 wire format). 91 new tests; full suite 679 green.

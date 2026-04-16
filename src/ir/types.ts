@@ -37,6 +37,8 @@ export interface CanonicalRequest {
   maxTokens?: number;
   temperature?: number;
   stream: true;
+  /** SPEC-206 — resolved reasoning effort; adapters translate per-provider. */
+  reasoning?: { effort: 'minimal' | 'low' | 'medium' | 'high'; applied: boolean };
 }
 
 export type FinishReason =

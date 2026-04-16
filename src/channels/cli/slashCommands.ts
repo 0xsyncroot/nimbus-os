@@ -1,6 +1,11 @@
 // slashCommands.ts — SPEC-801 T3: slash command registry + dispatcher.
 
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
+import {
+  parseThinkingArg,
+  ThinkingParseError,
+  type EffortLevel,
+} from '../../providers/reasoningResolver.ts';
 
 export interface ReplContext {
   wsId: string;
@@ -19,6 +24,9 @@ export interface ReplContext {
   setModel?: (model: string) => Promise<void>;
   showCost?: () => Promise<void>;
   setSpecConfirm?: (mode: 'always' | 'auto') => void;
+  /** SPEC-206 T3 — session-scoped reasoning effort override. */
+  setThinking?: (effort: EffortLevel) => Promise<void> | void;
+  currentThinking?: () => EffortLevel | null;
   [key: string]: unknown;
 }
 
@@ -185,6 +193,34 @@ export function registerDefaultCommands(): void {
     handler: async (_args, ctx) => {
       if (ctx.showCost) await ctx.showCost();
       else ctx.write('cost tracking not available');
+    },
+  });
+  registerSlash({
+    name: 'thinking',
+    description: 'Set reasoning effort for this session (on|off|minimal|low|medium|high)',
+    usage: '/thinking [on|off|minimal|low|medium|high]',
+    handler: async (args, ctx) => {
+      const raw = args.trim();
+      if (raw === '') {
+        const cur = ctx.currentThinking?.() ?? null;
+        ctx.write(`thinking: ${cur ?? '(auto — cue-driven)'}`);
+        return;
+      }
+      let effort: EffortLevel;
+      try {
+        effort = parseThinkingArg(raw);
+      } catch (err) {
+        if (err instanceof ThinkingParseError) {
+          throw new NimbusError(ErrorCode.U_BAD_COMMAND, {
+            reason: 'invalid_thinking_arg',
+            arg: err.badArg,
+            allowed: ['on', 'off', 'minimal', 'low', 'medium', 'high'],
+          });
+        }
+        throw err;
+      }
+      await ctx.setThinking?.(effort);
+      ctx.write(`thinking set to ${effort}`);
     },
   });
   registerSlash({
