@@ -1,7 +1,7 @@
 ---
 id: SPEC-306
 title: MCP client integration — stdio + HTTP transports
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16
@@ -18,6 +18,9 @@ files_touched:
   - src/mcp/toolTranslator.ts
   - src/mcp/serverLifecycle.ts
   - src/mcp/mcpNames.ts
+  - src/mcp/mcpSecurity.ts
+  - src/mcp/mcpPermission.ts
+  - src/mcp/backoff.ts
   - tests/mcp/mcpClient.test.ts
   - tests/mcp/toolTranslator.test.ts
 ---
