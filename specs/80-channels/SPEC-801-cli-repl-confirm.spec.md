@@ -2,20 +2,23 @@
 id: SPEC-801
 title: CLI REPL + confirm prompt
 status: implemented
-version: 0.1.0
+version: 0.2.7
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.1
 layer: channels
 depends_on: [SPEC-103, SPEC-401, SPEC-501, SPEC-601]
 blocks: [SPEC-901]
-estimated_loc: 250
+estimated_loc: 400
 files_touched:
   - src/channels/cli/repl.ts
   - src/channels/cli/confirm.ts
   - src/channels/cli/colors.ts
   - src/channels/cli/slashCommands.ts
+  - src/channels/cli/markdownRender.ts
+  - src/channels/cli/render.ts
+  - src/channels/ChannelAdapter.ts
   - tests/channels/cli/*.test.ts
 ---
 

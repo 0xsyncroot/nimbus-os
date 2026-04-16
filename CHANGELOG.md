@@ -4,6 +4,21 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.2.7-alpha] — 2026-04-16
+
+### Added
+
+- **CLI Markdown rendering** — assistant text is now buffered during streaming and
+  rendered as styled ANSI output on turn completion (`src/channels/cli/markdownRender.ts`).
+  Headings → bold cyan; bold/italic/codespan inline styles; unordered/ordered lists with `•`
+  and `N.` markers; nested lists with indentation; code fences with `[lang]` label and cyan
+  body; blockquotes with `│ ` prefix; horizontal rules. Plain text with no Markdown syntax
+  returns unchanged (fast path via `hasMarkdownSyntax`).
+- **`ChannelCapabilities`** interface + **`NativeFormat`** type added to `ChannelAdapter.ts`.
+  CLI channel declares `nativeFormat: 'ansi'`; future bot channels declare their own format
+  (`telegram-html`, `slack-mrkdwn`, `markdown`).
+- **`marked`** npm dependency added (v18).
+
 ### Added
 
 - **`install.sh`** — one-shot POSIX installer (`curl -fsSL …/install.sh | sh`).

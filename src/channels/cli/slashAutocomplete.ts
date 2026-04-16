@@ -16,8 +16,9 @@ export interface Autocomplete {
 export type AutocompleteInput = NodeJS.ReadableStream & {
   isTTY?: boolean;
   setRawMode?: (b: boolean) => unknown;
-  on(event: 'data', listener: (chunk: Buffer) => void): unknown;
-  removeListener(event: 'data', listener: (chunk: Buffer) => void): unknown;
+  setEncoding?: (encoding: BufferEncoding) => unknown;
+  on(event: 'data', listener: (chunk: string) => void): unknown;
+  removeListener(event: 'data', listener: (chunk: string) => void): unknown;
 };
 
 export interface AutocompleteOptions {
@@ -134,8 +135,7 @@ type KeyEvent =
   | { type: 'paste'; text: string }
   | { type: 'unknown' };
 
-function parseKey(data: Buffer): KeyEvent {
-  const s = data.toString('utf8');
+function parseKey(s: string): KeyEvent {
   if (s === '\r' || s === '\n') return { type: 'enter' };
   if (s === '\t') return { type: 'tab' };
   if (s === '\x7f' || s === '\b') return { type: 'backspace' };
@@ -261,7 +261,7 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
     }
   }
 
-  function onData(data: Buffer): void {
+  function onData(data: string): void {
     if (disposed || !resolveReadLine) return;
 
     // Paste detection: only true multi-byte sequences (>1 char in a single write) are treated
@@ -390,6 +390,7 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
         rawModeActive = true;
       }
 
+      if (typeof input.setEncoding === 'function') input.setEncoding('utf8');
       input.on('data', onData);
 
       // Draw initial prompt

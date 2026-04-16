@@ -5,7 +5,7 @@ import { ErrorCode, NimbusError } from '../../observability/errors.ts';
 import { logger } from '../../observability/logger.ts';
 import { getActiveWorkspace, switchWorkspace, listAllWorkspaces } from '../../core/workspace.ts';
 import { loadWorkspace } from '../../storage/workspaceStore.ts';
-import { getOrCreateSession } from '../../core/sessionManager.ts';
+import { getOrCreateSession, getCachedMessages, appendToCache } from '../../core/sessionManager.ts';
 import { runTurn } from '../../core/loop.ts';
 import { createTurnAbort, CANCEL_ESCALATION_WINDOW_MS } from '../../core/cancellation.ts';
 import { createProviderFromConfig } from '../../providers/registry.ts';
@@ -469,14 +469,35 @@ async function runSingleTurn(
     cwd: process.cwd(),
     mode: state.mode,
   });
+  // SPEC-121: snapshot prior messages before the turn for rehydration
+  const priorMessages = getCachedMessages(session.id);
+
+  // Append user message to cache now (loop.ts persists to JSONL separately)
+  const userMsg = { role: 'user' as const, content: [{ type: 'text' as const, text: userMessage }] };
+  appendToCache(session.id, userMsg);
+
+  let assistantTextBuf = '';
   try {
-    for await (const output of runTurn({
+    for await (const out of runTurn({
       ctx: turnCtx,
       userMessage,
       tools: toolAdapter,
       specConfirmAlways: state.specConfirmAlways,
+      priorMessages,
     })) {
-      renderer.handle(output);
+      renderer.handle(out);
+      // Collect assistant text from streaming chunks for cache
+      if (out.kind === 'chunk' && out.chunk.type === 'content_block_delta' && out.chunk.delta.type === 'text') {
+        assistantTextBuf += out.chunk.delta.text ?? '';
+      } else if (out.kind === 'chunk' && out.chunk.type === 'content_block_stop') {
+        if (assistantTextBuf.length > 0) {
+          appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
+          assistantTextBuf = '';
+        }
+      }
+    }
+    if (assistantTextBuf.length > 0) {
+      appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
     }
   } catch (err) {
     renderer.flush();

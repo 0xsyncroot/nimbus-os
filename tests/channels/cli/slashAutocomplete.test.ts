@@ -491,3 +491,76 @@ describe('SPEC-801: slashAutocomplete — scroll window', () => {
     expect(true).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Suite 11: UTF-8 multi-byte Vietnamese input (SPEC-801)
+// ---------------------------------------------------------------------------
+
+describe('SPEC-801: UTF-8 multi-byte input (Vietnamese)', () => {
+  test('NFC codepoint round-trips unchanged', async () => {
+    const { input, output } = makeStreams();
+    const ac = createAutocomplete({
+      input: input as unknown as AutocompleteInput,
+      output,
+      promptStr: () => '> ',
+      commands: listCommands,
+      cols: () => 80,
+    });
+    const p = ac.readLine();
+    await new Promise<void>((r) => setImmediate(r));
+    writeKeys(input, 'd', 'u', ' ');
+    // 'lịch' — write char by char via Buffer.from so setEncoding decodes them
+    for (const ch of 'lịch') {
+      input.write(Buffer.from(ch, 'utf8'));
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    writeKeys(input, ENTER);
+    const line = await p;
+    ac.dispose();
+    expect(line).toBe('du lịch');
+  });
+
+  test('split UTF-8 chunks reassembled (kernel TTY emulation)', async () => {
+    const { input, output } = makeStreams();
+    const ac = createAutocomplete({
+      input: input as unknown as AutocompleteInput,
+      output,
+      promptStr: () => '> ',
+      commands: listCommands,
+      cols: () => 80,
+    });
+    const p = ac.readLine();
+    await new Promise<void>((r) => setImmediate(r));
+    // ố = E1 BB 91, split after 1st byte — StringDecoder reassembles
+    input.write(Buffer.from([0xE1]));
+    await new Promise<void>((r) => setImmediate(r));
+    input.write(Buffer.from([0xBB, 0x91]));
+    await new Promise<void>((r) => setImmediate(r));
+    input.write(Buffer.from('\r'));
+    const line = await p;
+    ac.dispose();
+    expect(line).toBe('ố');
+    expect(line).not.toContain('\uFFFD');
+  });
+
+  test('"muốn hoạch định" typed char-by-char', async () => {
+    const { input, output } = makeStreams();
+    const ac = createAutocomplete({
+      input: input as unknown as AutocompleteInput,
+      output,
+      promptStr: () => '> ',
+      commands: listCommands,
+      cols: () => 80,
+    });
+    const p = ac.readLine();
+    await new Promise<void>((r) => setImmediate(r));
+    for (const ch of 'muốn hoạch định') {
+      input.write(Buffer.from(ch, 'utf8'));
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    writeKeys(input, ENTER);
+    const line = await p;
+    ac.dispose();
+    expect(line).toBe('muốn hoạch định');
+  });
+});

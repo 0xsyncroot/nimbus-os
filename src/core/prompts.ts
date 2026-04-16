@@ -4,6 +4,7 @@ import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
 import type { CanonicalBlock, ProviderCapabilities } from '../ir/types.ts';
 import type { WorkspaceMemory } from './memoryTypes.ts';
+import type { TaskSpec } from './taskSpec.ts';
 import {
   AUTONOMY_SECTION,
   PROMPT_SIZE_ERROR_BYTES,
@@ -18,6 +19,7 @@ export interface BuildPromptInput {
   caps: ProviderCapabilities;
   planCue?: string;
   environmentXml?: string;
+  taskSpec?: TaskSpec;
 }
 
 function textBlock(text: string, cache?: 'ephemeral'): CanonicalBlock {
@@ -26,7 +28,7 @@ function textBlock(text: string, cache?: 'ephemeral'): CanonicalBlock {
 }
 
 export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
-  const { memory, caps, planCue, environmentXml } = input;
+  const { memory, caps, planCue, environmentXml, taskSpec } = input;
   const explicit = caps.promptCaching === 'explicit';
 
   const blocks: CanonicalBlock[] = [];
@@ -55,6 +57,25 @@ export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
 
   // 7. MEMORY
   blocks.push(textBlock(`[MEMORY]\n${memory.memoryMd.body.trim()}\n`));
+
+  // 7b. INTERNAL_PLAN — injected when a TaskSpec is present (SPEC-110 v2)
+  if (taskSpec) {
+    const outcomes = taskSpec.outcomes.length > 200
+      ? taskSpec.outcomes.slice(0, 200) + '…'
+      : taskSpec.outcomes;
+    const actionLines = taskSpec.actions
+      .slice(0, 5)
+      .map((a) => `${a.tool}: ${a.reason}`)
+      .join('\n');
+    const planBlock = [
+      '[INTERNAL_PLAN]',
+      `outcomes: ${outcomes}`,
+      actionLines.length > 0 ? `planned_actions:\n${actionLines}` : '',
+      '',
+      'Follow this plan by calling the listed tools. If a listed tool is unavailable in your tool schemas, state that clearly instead of silently skipping.',
+    ].filter((l) => l !== '').join('\n');
+    blocks.push(textBlock(`${planBlock}\n`));
+  }
 
   // 8. TOOLS_AVAILABLE — final cacheable breakpoint
   blocks.push(

@@ -1,7 +1,9 @@
 // render.ts — SPEC-801: render loop outputs (chunks, tool events, spec announce) to stdout.
+// v0.2.7: assistant text is buffered and rendered as styled ANSI Markdown on turn completion.
 
 import type { LoopOutput } from '../../core/turn.ts';
 import { colors, prefixes } from './colors.ts';
+import { renderMarkdown } from './markdownRender.ts';
 
 export interface Renderer {
   handle(output: LoopOutput): void;
@@ -9,13 +11,16 @@ export interface Renderer {
 }
 
 export function createRenderer(write: (s: string) => void = (s) => process.stdout.write(s)): Renderer {
-  let inAssistantText = false;
+  // assistantBuf accumulates streaming text deltas; flushed + rendered on message_stop / turn_end.
+  let assistantBuf = '';
 
-  function finalizeLine(): void {
-    if (inAssistantText) {
-      write('\n');
-      inAssistantText = false;
-    }
+  function flushAssistant(): void {
+    if (assistantBuf.length === 0) return;
+    const rendered = renderMarkdown(assistantBuf);
+    write(rendered);
+    // Ensure output ends with newline for clean subsequent prefixes.
+    if (!rendered.endsWith('\n')) write('\n');
+    assistantBuf = '';
   }
 
   function handle(output: LoopOutput): void {
@@ -23,36 +28,36 @@ export function createRenderer(write: (s: string) => void = (s) => process.stdou
       case 'chunk': {
         const ch = output.chunk;
         if (ch.type === 'content_block_delta' && ch.delta.type === 'text') {
-          inAssistantText = true;
-          write(ch.delta.text ?? '');
+          assistantBuf += ch.delta.text ?? '';
         } else if (ch.type === 'content_block_start' && ch.block.type === 'tool_use') {
-          finalizeLine();
+          flushAssistant();
           write(`${colors.info(prefixes.tool)} ${ch.block.name}\n`);
         } else if (ch.type === 'message_stop') {
-          finalizeLine();
+          flushAssistant();
         }
         break;
       }
       case 'plan_announce':
-        finalizeLine();
+        flushAssistant();
         write(`${colors.dim(prefixes.plan)} ${output.reason}\n`);
         break;
       case 'spec_announce':
-        finalizeLine();
-        write(`${colors.dim(prefixes.spec)} ${output.summary}\n`);
+        flushAssistant();
+        // SPEC-110 v2: 1-line FYI using [plan] prefix. Full view: /spec-show (TODO).
+        write(`${colors.dim(prefixes.plan)} ${output.summary}\n`);
         break;
       case 'tool_start':
-        finalizeLine();
+        flushAssistant();
         write(`${colors.info(prefixes.tool)} → ${output.name}\n`);
         break;
       case 'tool_end':
-        finalizeLine();
+        flushAssistant();
         write(
           `${output.ok ? colors.ok(prefixes.ok) : colors.err(prefixes.err)} ${output.toolUseId} (${output.ms}ms)\n`,
         );
         break;
       case 'turn_end':
-        finalizeLine();
+        flushAssistant();
         if (output.metric.outcome === 'cancelled') {
           write(`${colors.warn(prefixes.warn)} turn cancelled\n`);
         } else if (output.metric.outcome === 'error') {
@@ -64,6 +69,6 @@ export function createRenderer(write: (s: string) => void = (s) => process.stdou
 
   return {
     handle,
-    flush: finalizeLine,
+    flush: flushAssistant,
   };
 }

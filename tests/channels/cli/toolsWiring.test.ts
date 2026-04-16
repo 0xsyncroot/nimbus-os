@@ -32,4 +32,18 @@ describe('SPEC-801/Task-25: REPL tools wiring', () => {
     expect(adapter.effectOf('Write')).toBe('write');
     expect(adapter.effectOf('Bash')).toBe('exec');
   });
+
+  test('WebSearch in default registry', () => {
+    const reg = createDefaultRegistry();
+    const names = reg.toJsonSchemas().map((t) => t.name);
+    expect(names).toContain('WebSearch');
+    expect(names).toContain('WebFetch');
+  });
+
+  test('WebSearch opt-out via includeWeb: false', () => {
+    const reg = createDefaultRegistry({ includeWeb: false });
+    const names = reg.toJsonSchemas().map((t) => t.name);
+    expect(names).not.toContain('WebSearch');
+    expect(names).not.toContain('WebFetch');
+  });
 });

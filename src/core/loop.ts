@@ -70,6 +70,36 @@ export interface ToolExecutor {
   effectOf(name: string): 'pure' | 'read' | 'write' | 'exec';
 }
 
+// SPEC-121: budget guard — drop oldest turn pairs when prior messages exceed 70% of context.
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
+
+function trimPriorMessages(
+  msgs: CanonicalMessage[],
+  maxContextTokens: number,
+): CanonicalMessage[] {
+  const budget = Math.floor(maxContextTokens * 0.7);
+  let chars = 0;
+  for (const m of msgs) {
+    const content = typeof m.content === 'string'
+      ? m.content
+      : m.content.map((b) => ('text' in b ? (b as { text: string }).text : '')).join('');
+    chars += content.length;
+  }
+  if (chars / TOKEN_ESTIMATE_CHARS_PER_TOKEN <= budget) return msgs;
+  // Drop oldest turn pairs (user+assistant) from the front until under budget
+  const trimmed = [...msgs];
+  while (trimmed.length >= 2 && chars / TOKEN_ESTIMATE_CHARS_PER_TOKEN > budget) {
+    const dropped = trimmed.splice(0, 2);
+    for (const m of dropped) {
+      const content = typeof m.content === 'string'
+        ? m.content
+        : m.content.map((b) => ('text' in b ? (b as { text: string }).text : '')).join('');
+      chars -= content.length;
+    }
+  }
+  return trimmed;
+}
+
 export interface RunTurnOptions {
   ctx: TurnContext;
   userMessage: string;
@@ -78,6 +108,8 @@ export interface RunTurnOptions {
   confirmer?: HighRiskConfirmer;
   generateSpec?: boolean;
   specConfirmAlways?: boolean;
+  /** SPEC-121: prior conversation messages for cross-turn context rehydration. */
+  priorMessages?: CanonicalMessage[];
 }
 
 function providerErrorFamily(code: ErrorCode): ErrorFamily | null {
@@ -148,7 +180,10 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
     // Task spec (SPEC-110) — fire-and-forget display, then persist, then high-risk gate
     const spec = await maybeGenerateSpec(opts, turnId);
     if (spec) {
-      const summary = displaySpecInline(spec);
+      // SPEC-110 v2: collapse to 1-line FYI (first sentence of outcomes).
+      // Full view accessible via /spec-show (TODO: implement slash command).
+      const firstSentence = spec.outcomes.split(/[.!?]/)[0]?.trim() ?? spec.outcomes;
+      const summary = firstSentence;
       yield { kind: 'spec_announce', summary };
       publishSafe(bus, TOPICS.session.specGenerated, {
         type: TOPICS.session.specGenerated,
@@ -179,10 +214,15 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
     const envXml = serializeEnvironment(env);
     const planCue = renderPlanCue(planDecision);
     const caps = ctx.provider.capabilities();
-    const systemBlocks = buildSystemPrompt({ memory, caps, planCue, environmentXml: envXml });
+    const systemBlocks = buildSystemPrompt({ memory, caps, planCue, environmentXml: envXml, taskSpec: spec ?? undefined });
 
     const tools = opts.tools?.listTools();
+    const maxCtxTokens = ctx.provider.capabilities().maxContextTokens;
+    const prior = opts.priorMessages
+      ? trimPriorMessages(opts.priorMessages, maxCtxTokens)
+      : [];
     const conversation: CanonicalMessage[] = [
+      ...prior,
       { role: 'user', content: [{ type: 'text', text: userMessage }] },
     ];
 

@@ -67,4 +67,30 @@ describe('SPEC-105: prompt backbone', () => {
   test('INJECTION_ORDER frozen', () => {
     expect(Object.isFrozen(INJECTION_ORDER)).toBe(true);
   });
+
+  test('INTERNAL_PLAN block injected when taskSpec present', () => {
+    const sys = buildSystemPrompt({
+      memory: FIX_MEMORY(true),
+      caps: CAPS_EXPLICIT,
+      taskSpec: {
+        schemaVersion: 2,
+        turnId: 'test-turn',
+        generatedAt: 0,
+        outcomes: 'find travel ideas',
+        scope: { in: ['web'], out: [] },
+        actions: [{ tool: 'WebSearch', reason: 'search for destinations' }],
+        risks: { severity: 'low', reasons: [] },
+        verification: 'results returned',
+      },
+    });
+    const text = sys.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+    expect(text).toContain('[INTERNAL_PLAN]');
+    expect(text).toContain('WebSearch: search for destinations');
+  });
+
+  test('INTERNAL_PLAN block absent when taskSpec not provided', () => {
+    const sys = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT });
+    const text = sys.map((b) => (b.type === 'text' ? b.text : '')).join('\n');
+    expect(text).not.toContain('[INTERNAL_PLAN]');
+  });
 });

@@ -8,10 +8,13 @@ import { createGrepTool } from './builtin/Grep.ts';
 import { createGlobTool } from './builtin/Glob.ts';
 import { createBashTool } from './builtin/Bash.ts';
 import { createMemoryTool } from './builtin/Memory.ts';
+import { createWebSearchTool } from './builtin/WebSearch.ts';
+import { createWebFetchTool } from './builtin/WebFetch.ts';
 
 export interface CreateDefaultsOptions {
   includeBash?: boolean;
   includeMemory?: boolean;
+  includeWeb?: boolean;
 }
 
 export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolRegistry {
@@ -23,5 +26,9 @@ export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolReg
   registry.register(createGlobTool());
   if (opts.includeBash !== false) registry.register(createBashTool());
   if (opts.includeMemory !== false) registry.register(createMemoryTool());
+  if (opts.includeWeb !== false) {
+    registry.register(createWebSearchTool());
+    registry.register(createWebFetchTool());
+  }
   return registry;
 }
