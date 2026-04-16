@@ -273,6 +273,10 @@ cleanup_existing() {
     done
     # Invalidate shell's command hash cache (bash/zsh builtin; ignore failure on dash)
     hash -r 2>/dev/null || true
+    # Flag so print_success can tell user to run `hash -r` in THEIR shell.
+    # (Our subshell's hash table won't propagate back to the parent interactive shell.)
+    REMOVED_ANY=1
+    export REMOVED_ANY
   else
     warn "Skipping removal. Old binary may shadow the new install."
   fi
@@ -439,11 +443,24 @@ print_success() {
   printf "  Version:  %s\n" "$NIMBUS_VERSION"
   printf "\n"
   printf "  Next: set your API key and start chatting\n"
-  printf "    %sexport ANTHROPIC_API_KEY=sk-ant-...%s    # Anthropic (Claude)\n" "$CYAN" "$RESET"
-  printf "    %sexport OPENAI_API_KEY=sk-...%s           # OpenAI / OpenAI-compat\n" "$CYAN" "$RESET"
-  printf "    %snimbus init%s                             # Interactive setup wizard\n" "$CYAN" "$RESET"
-  printf "    %snimbus%s                                  # Start chatting\n" "$CYAN" "$RESET"
+  # NOTE: use %b so $CYAN / $RESET (containing \033) are interpreted as escapes.
+  printf "    %bexport ANTHROPIC_API_KEY=sk-ant-...%b    # Anthropic (Claude)\n" "$CYAN" "$RESET"
+  printf "    %bexport OPENAI_API_KEY=sk-...%b           # OpenAI / OpenAI-compat\n" "$CYAN" "$RESET"
+  printf "    %bnimbus init%b                             # Interactive setup wizard\n" "$CYAN" "$RESET"
+  printf "    %bnimbus%b                                  # Start chatting\n" "$CYAN" "$RESET"
   printf "\n"
+
+  # CRITICAL: bash/zsh caches command→path mappings in the hash table. Even if
+  # we removed an old binary in cleanup_existing(), the user's shell still
+  # resolves `nimbus` to the old (now-deleted) path until `hash -r` runs.
+  # We can't modify the parent shell, so give clear instructions.
+  REMOVED_ANY="${REMOVED_ANY:-0}"
+  if [ "$REMOVED_ANY" = "1" ]; then
+    warn "IMPORTANT: your shell has cached the old binary path. Run this now:"
+    printf "    %bhash -r%b        # clear bash command cache\n" "$CYAN" "$RESET"
+    printf "    %bnimbus --version%b   # verify 0.2.5-alpha\n" "$CYAN" "$RESET"
+    printf "  Or just open a new terminal.\n\n"
+  fi
 
   # Check if INSTALL_DIR is already on PATH (current process)
   case ":${PATH}:" in
@@ -452,12 +469,12 @@ print_success() {
       ;;
     *)
       warn "Restart your shell or run the following to use nimbus immediately:"
-      printf "    %ssource %s%s\n" "$CYAN" "$CHOSEN_RC" "$RESET"
+      printf "    %bsource %s%b\n" "$CYAN" "$CHOSEN_RC" "$RESET"
       ;;
   esac
 
   printf "\n"
-  printf "  Learn more: %s%s%s\n" "$CYAN" "$LEARN_URL" "$RESET"
+  printf "  Learn more: %b%s%b\n" "$CYAN" "$LEARN_URL" "$RESET"
   printf "\n"
 }
 
