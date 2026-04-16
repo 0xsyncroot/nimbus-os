@@ -3,6 +3,7 @@
 // Routes: POST /api/v1/messages, GET /api/v1/health, WS /api/v1/stream
 // POST /api/v1/pair/start, POST /api/v1/pair/redeem
 
+import { createServer as netCreateServer } from 'node:net';
 import type { Server, ServerWebSocket } from 'bun';
 import type { ChannelAdapter } from '../ChannelAdapter.ts';
 import type { ChannelManager } from '../ChannelManager.ts';
@@ -41,6 +42,27 @@ export interface HttpChannelAdapter extends ChannelAdapter {
 
 const DEFAULT_PORT = 7432;
 const DEFAULT_BIND = '127.0.0.1';
+
+/**
+ * Ask the OS for a free port by binding a net server to port 0, recording the
+ * assigned port, and immediately closing it.  Used when cfg.port === 0 so we
+ * can pass a concrete port to Bun.serve and avoid the macOS bug where
+ * `server.port` / `server.url.port` still report 0 after `port: 0` binding.
+ */
+function pickFreePort(hostname: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = netCreateServer();
+    srv.listen(0, hostname, () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+      srv.close((err) => {
+        if (err) reject(err);
+        else resolve(port);
+      });
+    });
+    srv.on('error', reject);
+  });
+}
 
 function extractIp(req: Request, trustedProxy: boolean): string {
   if (trustedProxy) {
@@ -206,9 +228,13 @@ export function createHttpChannel(
         ? { tls: { cert: Bun.file(cfg.tlsCert), key: Bun.file(cfg.tlsKey) } }
         : {};
 
+    // When port === 0 (ephemeral, used in tests), pre-allocate via node:net to
+    // work around a Bun/macOS bug where Bun.serve({ port: 0 }).port stays 0.
+    const listenPort = port === 0 ? await pickFreePort(bind) : port;
+
     server = Bun.serve<WsData>({
       hostname: bind,
-      port,
+      port: listenPort,
       ...tlsOpts,
       async fetch(req, bunServer) {
         // WebSocket upgrade for /api/v1/stream.
@@ -230,12 +256,14 @@ export function createHttpChannel(
       websocket: wsHandlers,
     });
 
-    // Capture the OS-assigned port (important when cfg.port === 0).
-    // On some Bun/macOS combinations server.port may return 0 — fall back to
-    // server.url.port which is always accurate after Bun.serve() resolves.
+    // Capture the actual bound port.  Prefer server.port / server.url.port when
+    // they are non-zero (works on Linux); fall back to the pre-allocated port.
     const rawPort = server.port ?? 0;
     const urlPort = server.url ? parseInt(server.url.port, 10) : NaN;
-    boundPort = (rawPort > 0 ? rawPort : null) ?? (Number.isFinite(urlPort) && urlPort > 0 ? urlPort : null) ?? port;
+    boundPort =
+      (rawPort > 0 ? rawPort : null) ??
+      (Number.isFinite(urlPort) && urlPort > 0 ? urlPort : null) ??
+      listenPort;
     logger.info(
       { bind, port: boundPort, rawServerPort: server.port, serverUrl: server.url?.href },
       'HTTP/WS channel started',
