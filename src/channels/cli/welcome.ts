@@ -38,7 +38,11 @@ export interface WelcomeInput {
 
 export type WelcomeVariant = 'full' | 'compact' | 'plain';
 
-const STALE_SECONDS = 3600;
+// v0.3.3 fix: STALE_SECONDS shortened to 5 min so the prominent full banner
+// appears on most reopens. User report: "welcome screen missing" was actually
+// the 1-line compact variant being missed against terminal noise — keeping
+// compact rare while still saving on rapid reconnects.
+const STALE_SECONDS = 300;
 
 // ---------------------------------------------------------------------------
 // Layout constants (SPEC-824 §layout math)
@@ -62,6 +66,11 @@ export function pickVariant(input: WelcomeInput): WelcomeVariant {
   // Degrade to plain for non-color / non-TTY / very narrow terminals
   if (input.noColor || !input.isTTY || input.cols < 40) return 'plain';
 
+  // v0.3.3 fix — user report: "welcome screen missing on boot". Root cause:
+  // the 1-line compact variant (picked <1h since last boot) was visually
+  // indistinguishable from the prompt row, so users perceived no banner at
+  // all. Pick compact only for genuinely rapid reopens (<5 min), otherwise
+  // the full mascot banner. STALE_SECONDS already narrowed accordingly.
   const firstRun = !input.numStartups || input.numStartups <= 1;
   if (firstRun) return 'full';
 

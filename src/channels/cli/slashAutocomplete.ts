@@ -6,7 +6,6 @@ import {
   renderList,
   renderArgCard,
   renderEmpty,
-  diffAndWrite,
 } from './slashRenderer.ts';
 
 // ---------------------------------------------------------------------------
@@ -246,7 +245,18 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
     output.write(out);
 
     if (polished) {
-      // SPEC-822 T2/T3/T4/T6: polished renderer with partial redraw
+      // SPEC-822 T2/T3/T4/T6: polished renderer.
+      // v0.3.3 fix (legend duplication): previous partial-redraw via diffAndWrite
+      // assumed cursor was at bottom of block, but the outer `\r + CLEAR_LINE +
+      // CLEAR_BELOW + prompt + buffer` just cleared everything below and put
+      // cursor at end-of-buffer. diffAndWrite would then move cursor UP past the
+      // prompt into scrollback and paint the new dropdown there — while the
+      // OLD legend stayed visible below. Result: multiple legends on screen.
+      //
+      // Fix: since CLEAR_BELOW already wiped prior dropdown, do a clean full
+      // paint every time. Write lines BELOW prompt, then cursor-up back to
+      // end of buffer. `lastRenderedLines` is now only used to decide whether
+      // to do cursor-up (avoid inserting a spurious `\r` when nothing drawn).
       let nextLines: string[] = [];
 
       // Detect render state from buffer shape
@@ -267,12 +277,24 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
         nextLines = renderList({ kind: 'list', filtered, selected: selIdx >= 0 ? selIdx : 0 }, currentCols);
       }
 
-      if (nextLines.length > 0 || lastRenderedLines.length > 0) {
-        output.write(SAVE_CURSOR);
-        diffAndWrite(lastRenderedLines, nextLines, output);
-        output.write(RESTORE_CURSOR);
-        lastRenderedLines = nextLines;
+      if (nextLines.length > 0) {
+        // Write a leading newline (move below prompt row), then each line
+        // prefixed with erase-line so stale content goes. After last line,
+        // cursor is at col 0 of the row below the block. Cursor-up
+        // (nextLines.length + 1) rows returns to the prompt row at col 0;
+        // cursor-forward positions at end-of-buffer so the next keystroke
+        // appends naturally.
+        let paint = '\n';
+        for (const line of nextLines) {
+          paint += `\r${ESC}[2K${line}\n`;
+        }
+        paint += `${ESC}[${nextLines.length + 1}A`;
+        const promptVisLen = prompt.replace(/\x1b\[[0-9;]*m/g, '').length;
+        const col = promptVisLen + buffer.length;
+        if (col > 0) paint += `${ESC}[${col}C`;
+        output.write(paint);
       }
+      lastRenderedLines = nextLines;
     } else {
       // Legacy renderer (T8/T9 fallback)
       if (dropdownState.isOpen && filtered.length > 0) {

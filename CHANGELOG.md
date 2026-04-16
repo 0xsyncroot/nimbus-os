@@ -4,6 +4,55 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.3-alpha] — 2026-04-16 — URGENT patch (5 regressions from v0.3.2)
+
+### Fixed
+
+- **`/cost` placeholder resurrected after dashboard rewrite** — both the REPL slash command
+  (`src/channels/cli/repl.ts` `showCost`) and the CLI subcommand (`src/cli.ts` `case 'cost'`)
+  had the stale "cost tracking arrives in v0.2" string instead of routing to the SPEC-701
+  aggregator. Replaced with `aggregate(wsId, window)` → `renderRollup()`. Added
+  `src/cli/commands/cost.ts` to keep user-facing CLI arg parsing (`--today|--week|--month
+  [--by session|provider|day] [--json]`) isolated from the core aggregator.
+- **Markdown render lost on compiled binary** — `createRenderer()` used `process.stdout.isTTY`
+  for the TTY flag, which Bun's `--compile` target under-reported in some terminal emulators,
+  causing `flushAssistant()` to skip the markdown re-render. Added `TERM`-based fallback plus
+  a `NIMBUS_FORCE_MARKDOWN=1` escape hatch so the styled ANSI path fires whenever the user
+  is actually in an interactive terminal.
+- **Welcome screen missing on boot** — root cause was the 1-line compact variant picked for
+  any reopen within 1 hour (`STALE_SECONDS = 3600`). Visually indistinguishable from the
+  prompt row, users perceived no banner at all. Narrowed to 5 minutes (genuinely rapid
+  reconnect window) so the prominent full mascot banner renders on nearly every boot.
+- **Slash legend duplicated across keystrokes** — the partial-redraw path in
+  `slashAutocomplete.ts` invoked `diffAndWrite` wrapped in `SAVE_CURSOR/RESTORE_CURSOR`, but
+  `diffAndWrite` moved cursor UP by `prev.length` from the saved (prompt) row — into
+  scrollback, NOT onto the old dropdown rows. Meanwhile the outer redraw's `CLEAR_BELOW`
+  already wiped the prior dropdown, so the diff math was computing against ghost state.
+  Replaced with a clean full-frame paint: `\n` + each row prefixed `\r\x1b[2K`, then cursor
+  up + forward back to end-of-buffer. `diffAndWrite` retained in `slashRenderer.ts` for
+  existing test coverage; just no longer used by the autocomplete.
+- **`/clear` not dispatched** — registered `/clear` as a first-class slash command (category
+  `session`) that calls `ctx.clearScreen` → `\x1b[2J\x1b[3J\x1b[H`. Previously `/clear`
+  reached `dispatchSlash`, was not found in the registry, and emitted "Unknown command";
+  some users reportedly pasted trailing content that bypassed parseSlash and the LLM
+  treated it as natural-language text. Now explicit.
+
+### Added (regression tests)
+
+- `tests/channels/cli/slashCommands.test.ts` — `registerDefaultCommands` includes `/clear`;
+  `/clear` routes to `clearScreen`, not LLM; `/cost` routes to `showCost`, not placeholder.
+- `tests/channels/cli/slashAutocomplete.test.ts` — legend appears at most once in the last
+  render frame after typing `/`, `/h`, `/he`.
+- `tests/cli/commands/cost.test.ts` — `runCost` with no workspace exits 2 and does NOT emit
+  the v0.2 placeholder; with workspace, renders `Cost — Today`; `--json` emits valid JSON.
+- `tests/channels/cli/welcome.test.ts` — adjusted "compact <1h gap" tests to 5-minute
+  threshold matching the new `STALE_SECONDS`.
+
+### Changed
+
+- `package.json` version `0.3.2-alpha` → `0.3.3-alpha`; matching strings in `src/cli.ts`
+  and `src/cli/commands/doctor.ts`.
+
 ## [0.2.8-alpha] — 2026-04-16
 
 ### Fixed

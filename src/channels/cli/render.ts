@@ -45,9 +45,18 @@ export function createRenderer(
   opts: RendererOptions = {},
 ): Renderer {
   // Normalise: accept both legacy `(s: string) => void` and new `RendererOutput` object.
+  // v0.3.3 fix — when called with a bare write fn (as repl.ts does), detect TTY
+  // from process.stdout but also treat "TERM set and not dumb" as a TTY hint,
+  // so Bun compiled binaries that under-report isTTY still re-render markdown.
   let output: RendererOutput;
   if (typeof writeOrOutput === 'function') {
-    output = { write: writeOrOutput, isTTY: process.stdout.isTTY };
+    const stdoutTTY = process.stdout.isTTY === true;
+    const termHint =
+      process.env['TERM'] !== undefined &&
+      process.env['TERM'] !== '' &&
+      process.env['TERM'] !== 'dumb';
+    const forceMarkdown = process.env['NIMBUS_FORCE_MARKDOWN'] === '1';
+    output = { write: writeOrOutput, isTTY: forceMarkdown || stdoutTTY || termHint };
   } else {
     output = writeOrOutput;
   }

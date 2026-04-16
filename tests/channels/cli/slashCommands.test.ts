@@ -60,15 +60,47 @@ describe('SPEC-801: slashCommands', () => {
     expect(handled).toBe(false);
   });
 
-  test('registerDefaultCommands includes 13 commands incl /mode', () => {
+  test('registerDefaultCommands includes core commands incl /mode and /clear', () => {
     registerDefaultCommands();
     const names = listCommands().map((c) => c.name);
     for (const expected of [
       'help', 'quit', 'stop', 'new', 'switch', 'workspaces',
       'soul', 'memory', 'provider', 'model', 'cost', 'spec-confirm', 'mode',
+      'clear', // v0.3.3 regression — `/clear` must be a real slash command,
+               // not routed to the LLM as natural-language text.
     ]) {
       expect(names).toContain(expected);
     }
+  });
+
+  test('v0.3.3 regression — /clear dispatches to clearScreen, not LLM', async () => {
+    registerDefaultCommands();
+    const { ctx, output } = mockCtx();
+    let cleared = false;
+    ctx.clearScreen = () => { cleared = true; };
+    const handled = await dispatchSlash('/clear', ctx);
+    // Must be handled (returns true) → REPL loop will `continue` and not
+    // forward the text to the LLM.
+    expect(handled).toBe(true);
+    expect(cleared).toBe(true);
+    // Must NOT emit "Unknown command" — that would leak the slash as text
+    // into the user's conversation history.
+    expect(output.join('')).not.toContain('Unknown command');
+  });
+
+  test('v0.3.3 regression — /cost routes to showCost, not the v0.2 placeholder', async () => {
+    registerDefaultCommands();
+    const { ctx, output } = mockCtx();
+    let called = false;
+    ctx.showCost = async () => {
+      called = true;
+      ctx.write('Cost — Today\nTotal: $0.001234  (5 events)');
+    };
+    await dispatchSlash('/cost', ctx);
+    expect(called).toBe(true);
+    const combined = output.join('');
+    expect(combined).not.toContain('arrives in v0.2');
+    expect(combined).toContain('Total:');
   });
 
   test('/mode readonly calls setMode("readonly")', async () => {

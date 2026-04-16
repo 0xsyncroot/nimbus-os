@@ -355,6 +355,12 @@ function makeReplContext(
       await setActiveSession(state.wsId, meta);
       write(`${colors.ok(prefixes.ok)} new session ${meta.id}\n`);
     },
+    clearScreen: () => {
+      // v0.3.3 fix — /clear was routed to LLM as natural text; now a first-class slash command.
+      // Standard ANSI: \x1b[2J erases screen, \x1b[3J clears scrollback, \x1b[H homes cursor.
+      const isTerminal = (output as NodeJS.WriteStream).isTTY === true;
+      if (isTerminal) write('\x1b[2J\x1b[3J\x1b[H');
+    },
     switchWorkspace: async (name: string) => {
       const all = await listAllWorkspaces();
       const target = all.find((w) => w.name === name || w.id === name);
@@ -442,7 +448,15 @@ function makeReplContext(
       }
     },
     showCost: async () => {
-      write(`${colors.dim('cost tracking arrives in v0.2')}\n`);
+      // SPEC-701: route to cost aggregator for active workspace (default window=today).
+      try {
+        const { aggregate } = await import('../../cost/aggregator.ts');
+        const { renderRollup } = await import('../../cost/dashboard.ts');
+        const rollup = await aggregate(state.wsId, 'today');
+        write(`${renderRollup(rollup, { window: 'today', by: 'provider' })}\n`);
+      } catch (err) {
+        write(`${colors.err(prefixes.err)} cost: ${(err as Error).message}\n`);
+      }
     },
     setSpecConfirm: (_mode) => {
       // SPEC-132: spec-confirm mode removed (taskSpec superseded by TodoWriteTool)

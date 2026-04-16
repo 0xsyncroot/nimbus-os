@@ -64,13 +64,13 @@ describe('SPEC-824: pickVariant', () => {
     expect(pickVariant(baseInput({ numStartups: undefined, isTTY: true, noColor: false }))).toBe('full');
   });
 
-  test('>1h gap → full', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 4000;
+  test('>5min gap → full', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 400;
     expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, isTTY: true, noColor: false }))).toBe('full');
   });
 
-  test('<1h gap → compact', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+  test('<5min gap → compact (rapid reopens only)', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 60;
     expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, isTTY: true, noColor: false }))).toBe('compact');
   });
 

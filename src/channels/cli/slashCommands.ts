@@ -15,6 +15,7 @@ export interface ReplContext {
   cancelTurn?: () => void;
   quit?: () => void;
   newSession?: () => Promise<void>;
+  clearScreen?: () => void;
   switchWorkspace?: (name: string) => Promise<void>;
   listWorkspaces?: () => Promise<void>;
   showSoul?: () => Promise<void>;
@@ -156,6 +157,16 @@ export function registerDefaultCommands(): void {
     handler: async (_args, ctx) => {
       if (ctx.newSession) await ctx.newSession();
       else ctx.write('new session not supported');
+    },
+  });
+  registerSlash({
+    name: 'clear',
+    description: 'Clear the terminal screen (session history preserved)',
+    usage: '/clear',
+    category: 'session',
+    handler: (_args, ctx) => {
+      if (ctx.clearScreen) ctx.clearScreen();
+      else ctx.write('clear not supported on this terminal');
     },
   });
   registerSlash({

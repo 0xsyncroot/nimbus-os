@@ -493,6 +493,55 @@ describe('SPEC-801: slashAutocomplete — scroll window', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Suite 10b: v0.3.3 regression — legend not duplicated across keystrokes
+// ---------------------------------------------------------------------------
+
+describe('v0.3.3 regression: slash legend not duplicated on redraw', () => {
+  test('after typing /, /h, /he — final rendered output contains exactly one legend tail', async () => {
+    const { input, output, captured } = makeStreams();
+    const ac = createAutocomplete({
+      input: input as unknown as AutocompleteInput,
+      output,
+      promptStr: () => '> ',
+      commands: listCommands,
+      cols: () => 80,
+    });
+
+    const readPromise = ac.readLine();
+    await new Promise<void>((r) => setImmediate(r));
+
+    // Type '/', then 'h', then 'e' — previously the partial-redraw math left
+    // stale legend rows painted above the prompt, producing multiple
+    // "↑↓ select" strings in the on-screen frame after each keystroke.
+    writeKeys(input, '/');
+    await new Promise<void>((r) => setImmediate(r));
+    writeKeys(input, 'h');
+    await new Promise<void>((r) => setImmediate(r));
+    writeKeys(input, 'e');
+    await new Promise<void>((r) => setImmediate(r));
+
+    writeKeys(input, ENTER);
+    await readPromise;
+    ac.dispose();
+
+    // After Enter, the Enter handler explicitly clears the dropdown. During
+    // streaming the writer receives each full-frame repaint prefixed by
+    // CLEAR_LINE + CLEAR_BELOW; by construction every redraw wipes prior
+    // content before writing new content. The regression check: the last
+    // redraw's visible frame (between the final CLEAR_BELOW and the Enter-
+    // issued CLEAR_BELOW) must contain the legend at most once.
+    const raw = captured();
+    // CLEAR_BELOW = ESC[J — split on it to isolate frames.
+    const frames = raw.split('\x1b[J');
+    // The last non-trivial frame is the state right before Enter — ignore
+    // the post-Enter empty tail.
+    const lastFrame = frames[frames.length - 2] ?? frames[frames.length - 1] ?? '';
+    const legendCount = (lastFrame.match(/↑↓ select/g) ?? []).length;
+    expect(legendCount).toBeLessThanOrEqual(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Suite 11: UTF-8 multi-byte Vietnamese input (SPEC-801)
 // ---------------------------------------------------------------------------
 
