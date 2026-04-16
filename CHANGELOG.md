@@ -4,6 +4,84 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.6-alpha] — 2026-04-16 — URGENT fix (Telegram hallucination: dead-code adapter → real wiring)
+
+User repro flow (v0.3.5):
+
+```
+personal › tiếp tục kết nối tele đi e
+  ⋯ writing telegram_bot.py
+[ASK] Cho em ghi file telegram_bot.py? [Y/n/always/never] y
+  ⋯ running: python3 -m pip install python-telegram-bot==21.6 ...
+```
+
+Agent wrote a Python bot script and pip-installed `python-telegram-bot` —
+complete hallucination. Nimbus has a **built-in** Telegram adapter
+(SPEC-803, shipped v0.3), but v0.3.5 never wired it into the runtime:
+
+- No tool for the agent to invoke — so agent fell back to Write/Bash.
+- `ChannelManager` existed only in tests; never instantiated in runtime.
+- `channel.inbound` bus topic had zero subscribers — even if the adapter
+  ran, inbound Telegram messages would vanish.
+- No CLI command to configure token + allowlist.
+- System prompt never mentioned the built-in adapter capability.
+
+### Added (SPEC-808)
+
+- **`ConnectTelegram` / `DisconnectTelegram` / `TelegramStatus` tools**
+  (`src/tools/builtin/Telegram.ts`) — agent now has a real tool to call
+  when the user says "kết nối telegram". Tools pull provider / model /
+  registry / gate from a runtime bridge wired at REPL boot.
+- **`ChannelRuntime` singleton** (`src/channels/runtime.ts`) — holds the
+  `ChannelManager`, subscribes `channel.inbound` → runs a real `runTurn`
+  with Telegram input as the user message, replies via
+  `adapter.sendToChat()`. Per-chat serial queue prevents interleaved turns
+  for the same user.
+- **`nimbus telegram` subcommand** (`src/cli/commands/telegram.ts`) —
+  `set-token` / `allow <id>` / `remove <id>` / `list` / `status` / `test` /
+  `clear-token` / `reset --yes`. Token stored in vault at
+  `service:telegram:botToken`; allowlist at `service:telegram:allowedUserIds`.
+  The `test` subcommand calls Telegram `getMe` and reports `@username`.
+- **`[CHANNELS]` system-prompt section** (`src/core/promptSections.ts`) —
+  explicitly lists the built-in tools and states "NEVER create a
+  `telegram_bot.py` or pip install `python-telegram-bot`". Hard-coded
+  anti-hallucination guard.
+- **TOOLS.md template note** — new workspaces get a "Channels" section in
+  the tools manifest pointing at the built-in adapters.
+
+### Security
+
+- Bot token read from vault only; never logged, never in tool_result
+  payloads, never in prompts. Tool display shows `@botUsername`.
+- Inbound Telegram text kept in a `<channel_input source="telegram"
+  trusted="false">…</channel_input>` wrapper so the agent treats it as
+  untrusted (META-009 defense-in-depth over the channel). Closing-tag
+  spoof attempts are neutralised via escape.
+- All telegram-CLI paths call `autoProvisionPassphrase` before vault I/O
+  so the list/status commands don't silently swallow decrypt failures
+  (bug caught during smoke: previously `allow 42` would claim success
+  but `list` showed empty).
+- Unknown adapter IDs flowing through the inbound bridge are ignored; the
+  existing SPEC-803 allowlist drop + security-event path is preserved.
+
+### Verified
+
+- 1876 unit tests + 15 HTTP tests green on Linux. New tests:
+  - `tests/channels/telegram/config.test.ts` (11)
+  - `tests/channels/runtime.test.ts` (6)
+  - `tests/tools/telegram.test.ts` (6)
+- Binary smoke: `nimbus telegram status / allow / remove / list / test /
+  reset / set-token --token-stdin` round-trip against a fresh vault.
+
+### Scope
+
+- Daemon mode (bot stays online when REPL exits) → v0.4, documented in
+  `status` output. Current behaviour: adapter lives inside the REPL
+  process; clean shutdown on exit.
+- Webhook transport → v0.3.1 (long-poll only in v0.3.6).
+- Slack runtime bridge uses the same pattern — trivial follow-up once
+  Telegram is stable.
+
 ## [0.3.5-alpha] — 2026-04-16 — URGENT patch (REPL exit after tool confirm)
 
 User repro flow (v0.3.4):

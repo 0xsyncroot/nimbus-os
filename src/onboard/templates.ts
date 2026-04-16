@@ -77,6 +77,13 @@ schemaVersion: 1
 
 Default v0.1 toolset (read/write files, shell, web fetch).
 
+## Channels
+
+Nimbus ships built-in channel adapters. Use the built-in tools — never write a custom bot script:
+
+- \`ConnectTelegram\` / \`DisconnectTelegram\` / \`TelegramStatus\` — Telegram bot (long-poll)
+  Configure via \`nimbus telegram set-token\` + \`nimbus telegram allow <userId>\`.
+
 ## Bash rules
 
 Preset: **\${bashPreset}**

@@ -17,6 +17,11 @@ import { createSendMessageTool } from './sendMessage.ts';
 import { createReceiveMessageTool } from './receiveMessage.ts';
 import { createEnterPlanModeTool } from './enterPlanMode.ts';
 import { createExitPlanModeTool } from './exitPlanMode.ts';
+import {
+  createConnectTelegramTool,
+  createDisconnectTelegramTool,
+  createTelegramStatusTool,
+} from './builtin/Telegram.ts';
 
 export interface CreateDefaultsOptions {
   includeBash?: boolean;
@@ -26,6 +31,8 @@ export interface CreateDefaultsOptions {
   includeWeb?: boolean;
   /** Include sub-agent coordination tools (AgentTool, SendMessage, ReceiveMessage). Default: true. */
   includeSubAgent?: boolean;
+  /** Include channel-adapter control tools (ConnectTelegram, etc). Default: true. */
+  includeChannels?: boolean;
 }
 
 export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolRegistry {
@@ -54,5 +61,13 @@ export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolReg
   // SPEC-133: plan mode tools always registered.
   registry.register(createEnterPlanModeTool());
   registry.register(createExitPlanModeTool());
+  // SPEC-808: channel-adapter control tools. Default on so the agent has a real
+  // tool to invoke when the user says "kết nối telegram" — without these, v0.3.5
+  // agent hallucinated a python bot script.
+  if (opts.includeChannels !== false) {
+    registry.register(createConnectTelegramTool());
+    registry.register(createDisconnectTelegramTool());
+    registry.register(createTelegramStatusTool());
+  }
   return registry;
 }

@@ -22,3 +22,12 @@ export { createGrepTool, GrepInputSchema } from './builtin/Grep.ts';
 export { createGlobTool, GlobInputSchema } from './builtin/Glob.ts';
 export { createBashTool, BashInputSchema } from './builtin/Bash.ts';
 export { createMemoryTool, MemoryInputSchema } from './builtin/Memory.ts';
+export {
+  createConnectTelegramTool,
+  createDisconnectTelegramTool,
+  createTelegramStatusTool,
+  setTelegramRuntimeBridge,
+  ConnectTelegramInputSchema,
+  DisconnectTelegramInputSchema,
+  TelegramStatusInputSchema,
+} from './builtin/Telegram.ts';

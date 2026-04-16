@@ -9,6 +9,7 @@ import type { WorkspaceMemory } from './memoryTypes.ts';
 import type { SessionPreferences } from './sessionPreferences.ts';
 import {
   AUTONOMY_SECTION,
+  CHANNELS_SECTION,
   CREDENTIAL_HANDLING_SECTION,
   PROMPT_SIZE_ERROR_BYTES,
   PROMPT_SIZE_WARN_BYTES,
@@ -80,6 +81,11 @@ export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
   blocks.push(textBlock(SAFETY_SECTION));
   blocks.push(textBlock(UNTRUSTED_CONTENT_SECTION));
   blocks.push(textBlock(TOOL_USAGE_SECTION));
+
+  // SPEC-808: CHANNELS — tell the agent the built-in adapters exist so it
+  // doesn't hallucinate a python bot script when the user asks to connect a
+  // channel (v0.3.5 regression).
+  blocks.push(textBlock(CHANNELS_SECTION));
 
   // 7. MEMORY
   blocks.push(textBlock(`[MEMORY]\n${memory.memoryMd.body.trim()}\n`));

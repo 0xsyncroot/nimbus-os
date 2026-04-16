@@ -29,6 +29,8 @@ import {
 import { createAutocomplete, type AutocompleteInput } from './slashAutocomplete.ts';
 import { handleModelPicker } from './modelPicker.ts';
 import { wireBusSubscribers } from './subscriptions.ts';
+import { setTelegramRuntimeBridge } from '../../tools/builtin/Telegram.ts';
+import { getChannelRuntime } from '../runtime.ts';
 
 export interface ReplOptions {
   workspaceId?: string;
@@ -200,6 +202,21 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 
   const unwireBus = wireBusSubscribers({ workspaceId: state.wsId, channel: 'cli' });
 
+  // SPEC-808: bind the Telegram tool bridge so ConnectTelegram can start the
+  // adapter with the same provider/model/registry/gate the REPL uses. The
+  // bridge captures a closure over `state`; a tool invocation happens during
+  // runTurn where the provider is already lazy-initialised.
+  setTelegramRuntimeBridge((_toolCtx) => {
+    if (!state.provider) return null; // provider not yet initialised — shouldn't happen mid-turn
+    return {
+      provider: state.provider,
+      model: state.model,
+      registry: state.registry,
+      gate: state.gate,
+      cwd: process.cwd(),
+    };
+  });
+
   // SPEC-823 T4 — persist boot meta, then render welcome screen
   let bootedMeta = loaded.meta;
   try {
@@ -279,6 +296,14 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   if (isTTY) process.off('SIGWINCH', onSigwinch);
   ac?.dispose();
   unwireBus();
+  // SPEC-808: tear down channel runtime so the Telegram long-poll doesn't
+  // leak across REPL exit.
+  try {
+    await getChannelRuntime().dispose();
+  } catch {
+    // best-effort cleanup
+  }
+  setTelegramRuntimeBridge(null);
   rl.close();
 }
 

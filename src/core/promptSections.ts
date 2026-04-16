@@ -71,6 +71,23 @@ export const TOOL_USAGE_SECTION: string = `[TOOL_USAGE]
 - Before a destructive action, echo the exact command/target and proceed only after internal plan confirms it is intended.
 `;
 
+export const CHANNELS_SECTION: string = `[CHANNELS]
+Nimbus ships with built-in channel adapters. When the user asks to "connect" / "kết nối" / "wire up" a channel, invoke the built-in tool — do NOT write a custom bot script or install a third-party bot library.
+
+Available channel tools:
+- \`ConnectTelegram\` — start the Telegram bot long-poller (token + allowlist read from the vault)
+- \`DisconnectTelegram\` — stop the Telegram adapter
+- \`TelegramStatus\` — report connected / offline + bot username + authorised user count
+
+Flow for "kết nối telegram":
+1. Call \`TelegramStatus\` first to see current state.
+2. If offline and token missing → tell the user one line: "Chưa có token — anh chạy \`nimbus telegram set-token\` rồi paste token từ @BotFather, sau đó \`nimbus telegram allow <id>\`, rồi nói em kết nối lại." Do NOT attempt to write files or install packages.
+3. If offline and token + allowlist present → call \`ConnectTelegram\`. On success report the bot @username.
+4. If already online → report status; do not reconnect.
+
+Hard rule (prevents the v0.3.5 hallucination regression): NEVER create a \`telegram_bot.py\` or any Python/JS bot script. NEVER pip install \`python-telegram-bot\` or similar. The adapter is built in. Use the tools.
+`;
+
 export const INJECTION_ORDER = Object.freeze([
   'SOUL',
   'IDENTITY',
@@ -80,6 +97,7 @@ export const INJECTION_ORDER = Object.freeze([
   'SAFETY',
   'UNTRUSTED_CONTENT',
   'TOOL_USAGE',
+  'CHANNELS',
   'MEMORY',
   'TOOLS_AVAILABLE',
 ] as const);

@@ -135,7 +135,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.3.4-alpha\n');
+      process.stdout.write('nimbus-os 0.3.6-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -214,12 +214,16 @@ async function main(): Promise<number> {
       const { runSkillCli } = await import('./skills/registry/skillCli.ts');
       return runSkillCli(args.slice(1));
     }
+    case 'telegram': {
+      const { runTelegram } = await import('./cli/commands/telegram.ts');
+      return runTelegram(args.slice(1));
+    }
     case undefined: {
       // Detect upgrade banner
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.3.4-alpha';
+        const current = '0.3.6-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);
@@ -284,6 +288,10 @@ Commands:
   skill      Manage skills from the registry
              Subcommands: search [query]  install <name[@ver]>  list  info <name>
                           upgrade <name>  revoke <name>  reassess <name>  audit
+  telegram   Configure built-in Telegram channel (token + allowlist)
+             Subcommands: set-token  allow <id>  remove <id>  list  status
+                          test  clear-token  reset --yes
+             Tip: connect to Telegram from the REPL — say "kết nối telegram"
 
 Future versions:
   daemon     Install/manage background service (v0.4)
