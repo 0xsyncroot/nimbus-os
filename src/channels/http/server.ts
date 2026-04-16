@@ -214,7 +214,7 @@ export function createHttpChannel(
         // WebSocket upgrade for /api/v1/stream.
         const url = new URL(req.url);
         if (url.pathname === '/api/v1/stream') {
-          const ip = extractIp(req, cfg.trustedProxy ?? false);
+          const ip = bunServer.requestIP(req)?.address ?? extractIp(req, cfg.trustedProxy ?? false);
           const result = await validateWsUpgrade(req, resolveWorkspaceForToken, ip);
           if (!result.ok) {
             return jsonResponse({ error: result.message }, result.status);
@@ -231,8 +231,15 @@ export function createHttpChannel(
     });
 
     // Capture the OS-assigned port (important when cfg.port === 0).
-    boundPort = server.port ?? port;
-    logger.info({ bind, port: boundPort }, 'HTTP/WS channel started');
+    // On some Bun/macOS combinations server.port may return 0 — fall back to
+    // server.url.port which is always accurate after Bun.serve() resolves.
+    const rawPort = server.port ?? 0;
+    const urlPort = server.url ? parseInt(server.url.port, 10) : NaN;
+    boundPort = (rawPort > 0 ? rawPort : null) ?? (Number.isFinite(urlPort) && urlPort > 0 ? urlPort : null) ?? port;
+    logger.info(
+      { bind, port: boundPort, rawServerPort: server.port, serverUrl: server.url?.href },
+      'HTTP/WS channel started',
+    );
   }
 
   async function stop(): Promise<void> {
