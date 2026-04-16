@@ -33,6 +33,12 @@ export interface HttpChannelConfig {
   trustedProxy?: boolean;
 }
 
+/** Extended adapter returned by createHttpChannel — exposes the OS-assigned port.
+ *  Use boundPort (not the config port) when port: 0 is passed. */
+export interface HttpChannelAdapter extends ChannelAdapter {
+  readonly boundPort: number;
+}
+
 const DEFAULT_PORT = 7432;
 const DEFAULT_BIND = '127.0.0.1';
 
@@ -79,9 +85,10 @@ export function createHttpChannel(
   cfg: HttpChannelConfig,
   channelManager: ChannelManager,
   workspaceId: string,
-): ChannelAdapter {
+): HttpChannelAdapter {
   const port = cfg.port ?? DEFAULT_PORT;
   const bind = cfg.bindAddress ?? DEFAULT_BIND;
+  let boundPort = port;
   const isRemote = bind !== '127.0.0.1' && bind !== 'localhost' && bind !== '::1';
 
   if (isRemote && (!cfg.tlsCert || !cfg.tlsKey)) {
@@ -223,14 +230,18 @@ export function createHttpChannel(
       websocket: wsHandlers,
     });
 
-    logger.info({ bind, port }, 'HTTP/WS channel started');
+    // Capture the OS-assigned port (important when cfg.port === 0).
+    boundPort = server.port ?? port;
+    logger.info({ bind, port: boundPort }, 'HTTP/WS channel started');
   }
 
   async function stop(): Promise<void> {
     closeAllWsConnections(1001, 'server stopping');
-    server?.stop();
+    if (server) {
+      await server.stop(true); // true = close idle connections immediately
+    }
     server = null;
-    logger.info({ bind, port }, 'HTTP/WS channel stopped');
+    logger.info({ bind, port: boundPort }, 'HTTP/WS channel stopped');
   }
 
   async function send(_wid: string, text: string): Promise<void> {
@@ -244,6 +255,7 @@ export function createHttpChannel(
     kind: 'http',
     nativeFormat: 'markdown',
     capabilities: { nativeFormat: 'markdown' },
+    get boundPort() { return boundPort; },
     start,
     stop,
     send,

@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, beforeAll, afterAll } fr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdir, rm } from 'node:fs/promises';
-import { createHttpChannel } from '../../../src/channels/http/server.ts';
+import { createHttpChannel, type HttpChannelAdapter } from '../../../src/channels/http/server.ts';
 import { createChannelManager } from '../../../src/channels/ChannelManager.ts';
 import { createEventBus, __resetGlobalBus } from '../../../src/core/events.ts';
 import { generateBearerToken, storeBearerToken, __resetIpMap } from '../../../src/channels/http/auth.ts';
@@ -14,9 +14,6 @@ import { TOPICS } from '../../../src/core/eventTypes.ts';
 import type { ChannelInboundEvent } from '../../../src/core/eventTypes.ts';
 
 const OVERRIDE = join(tmpdir(), `nimbus-srv-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-
-// Use a random port to avoid conflicts.
-let port = 17432 + Math.floor(Math.random() * 1000);
 
 beforeAll(() => {
   process.env['NIMBUS_VAULT_PASSPHRASE'] = 'test-server-passphrase-802';
@@ -35,7 +32,6 @@ beforeEach(async () => {
   __resetGlobalBus();
   __resetSecretStoreCache();
   __resetFileFallbackKey();
-  port++;
 });
 afterEach(async () => {
   delete process.env['NIMBUS_HOME'];
@@ -49,10 +45,11 @@ async function startServer(workspaceId: string, token: string) {
   await storeBearerToken(workspaceId, token);
   const bus = createEventBus();
   const mgr = createChannelManager(bus);
-  const channel = createHttpChannel({ port, bindAddress: '127.0.0.1' }, mgr, workspaceId);
+  // port: 0 lets the OS pick a free port — avoids conflicts on all platforms.
+  const channel = createHttpChannel({ port: 0, bindAddress: '127.0.0.1' }, mgr, workspaceId);
   mgr.register(channel);
   await channel.start();
-  return { channel, bus, mgr };
+  return { channel: channel as HttpChannelAdapter, bus, mgr };
 }
 
 describe('SPEC-805: HTTP server', () => {
@@ -60,7 +57,7 @@ describe('SPEC-805: HTTP server', () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-health', token);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/health`);
       expect(res.status).toBe(200);
       const body = await res.json() as { status: string };
       expect(body.status).toBe('ok');
@@ -75,7 +72,7 @@ describe('SPEC-805: HTTP server', () => {
     const inbound: ChannelInboundEvent[] = [];
     bus.subscribe<ChannelInboundEvent>(TOPICS.channel.inbound, (ev) => { inbound.push(ev); });
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -100,7 +97,7 @@ describe('SPEC-805: HTTP server', () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-auth', token);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer nmbt_invalid_token_000000000000000000000000',
@@ -119,7 +116,7 @@ describe('SPEC-805: HTTP server', () => {
     const { channel } = await startServer('ws-ban', token);
     try {
       for (let i = 0; i < 10; i++) {
-        await fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+        await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
           method: 'POST',
           headers: {
             'Authorization': 'Bearer nmbt_wrong_token_0000000000000000000000000',
@@ -128,7 +125,7 @@ describe('SPEC-805: HTTP server', () => {
           body: JSON.stringify({ text: 'hi' }),
         });
       }
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer nmbt_wrong_token_0000000000000000000000000',
@@ -146,18 +143,19 @@ describe('SPEC-805: HTTP server', () => {
     const bus = createEventBus();
     const mgr = createChannelManager(bus);
     expect(() =>
-      createHttpChannel({ port, bindAddress: '0.0.0.0' }, mgr, 'ws-remote'),
+      createHttpChannel({ port: 0, bindAddress: '0.0.0.0' }, mgr, 'ws-remote'),
     ).toThrow();
   });
 
   test('stop() closes server gracefully', async () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-stop', token);
+    const stoppedPort = channel.boundPort;
     await channel.stop();
     // After stop, requests should fail (connection refused).
     let threw = false;
     try {
-      await fetch(`http://127.0.0.1:${port}/api/v1/health`, { signal: AbortSignal.timeout(500) });
+      await fetch(`http://127.0.0.1:${stoppedPort}/api/v1/health`, { signal: AbortSignal.timeout(500) });
     } catch {
       threw = true;
     }
@@ -168,7 +166,7 @@ describe('SPEC-805: HTTP server', () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-val', token);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/messages`, {
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -186,7 +184,7 @@ describe('SPEC-805: HTTP server', () => {
     const token = generateBearerToken();
     const { channel } = await startServer('ws-404', token);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/unknown`, {
+      const res = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/unknown`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       expect(res.status).toBe(404);
@@ -203,7 +201,7 @@ describe('SPEC-805: WS auth rejection tests', () => {
     try {
       // Attempt WS upgrade with token in query string — expect non-101 response.
       const res = await fetch(
-        `http://127.0.0.1:${port}/api/v1/stream?token=${token}`,
+        `http://127.0.0.1:${channel.boundPort}/api/v1/stream?token=${token}`,
         {
           headers: {
             'Upgrade': 'websocket',
@@ -226,7 +224,7 @@ describe('SPEC-805: pairing roundtrip', () => {
     const { channel } = await startServer('ws-pair', token);
     try {
       // Start pairing
-      const startRes = await fetch(`http://127.0.0.1:${port}/api/v1/pair/start`, {
+      const startRes = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/pair/start`, {
         method: 'POST',
       });
       expect(startRes.status).toBe(200);
@@ -235,7 +233,7 @@ describe('SPEC-805: pairing roundtrip', () => {
 
       // We can't get the plaintext code from HTTP (it's displayed to terminal),
       // so we test that an invalid code is rejected.
-      const redeemRes = await fetch(`http://127.0.0.1:${port}/api/v1/pair/redeem`, {
+      const redeemRes = await fetch(`http://127.0.0.1:${channel.boundPort}/api/v1/pair/redeem`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: '000000' }),
