@@ -237,6 +237,8 @@ export function createHttpChannel(
       port: listenPort,
       ...tlsOpts,
       async fetch(req, bunServer) {
+        // Diagnostic: confirm handler is reached.
+        process.stderr.write(`[nimbus-http] fetch: ${req.method} ${req.url}\n`);
         // WebSocket upgrade for /api/v1/stream.
         const url = new URL(req.url);
         if (url.pathname === '/api/v1/stream') {
@@ -264,6 +266,10 @@ export function createHttpChannel(
       (rawPort > 0 ? rawPort : null) ??
       (Number.isFinite(urlPort) && urlPort > 0 ? urlPort : null) ??
       listenPort;
+    // Diagnostic: print to stderr so it appears in CI logs regardless of log level.
+    process.stderr.write(
+      `[nimbus-http] start: listenPort=${listenPort} server.port=${server.port} urlPort=${urlPort} boundPort=${boundPort} platform=${process.platform} arch=${process.arch}\n`,
+    );
     logger.info(
       { bind, port: boundPort, rawServerPort: server.port, serverUrl: server.url?.href },
       'HTTP/WS channel started',
