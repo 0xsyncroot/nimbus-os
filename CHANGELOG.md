@@ -2,6 +2,36 @@
 
 All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.3-alpha] — 2026-04-16
+
+### Fixed
+
+- **P_AUTH on upgrade (root cause)** — `diagnoseVault()` now runs at startup before REPL boot.
+  If vault decrypt fails (e.g., passphrase mismatch after v0.2.1→v0.2.2 upgrade), an interactive
+  recovery prompt guides the user to re-enter their key inline. Non-TTY prints actionable hint.
+  `NIMBUS_SKIP_DIAGNOSE=1` env var bypasses for CI / scripted installs.
+
+### Added
+
+- **`nimbus doctor`** — read-only health check: platform, Bun version, workspace, schema version,
+  vault file + decrypt, .vault-key permissions. Exit 0 = all OK, 1 = issues found with fix hints.
+- **`nimbus vault reset [--yes]`** — backup secrets.enc → secrets.broken-{ts}.enc, delete vault,
+  re-provision passphrase, prompt for new API key inline. `--yes` required to confirm.
+- **`nimbus vault status`** — single-line vault health (same as doctor's vault row).
+- **`nimbus backup create [--out FILE]`** — tar.gz of workspaces/ + .vault-key (mode 0600).
+  Unencrypted in v0.2.3 with clear WARNING; AES-GCM stream encryption deferred to v0.3.
+- **`nimbus backup restore <file>`** — extract backup for manual inspection.
+- **`nimbus backup list`** — list backups in ~/nimbus-backups/.
+- **Auto-snapshot before vault reset** — secrets.enc copied to secrets.broken-{ISO_TS}.enc before
+  any destructive vault operation (vault reset, recovery prompt repair path).
+- **Upgrade detection banner** — on first boot after version change, prints "nimbus X → Y (upgraded)"
+  + changelog highlights. Pinned to `~/.nimbus/installed-version` after successful boot.
+- **`src/platform/secrets/diagnose.ts`** — read-only vault classifier returning typed `VaultStatus`.
+  Never throws; classifies: missing_file, missing_passphrase, decrypt_failed, corrupt_envelope,
+  schema_old, schema_newer.
+- **`src/onboard/upgradeDetector.ts`** — reads/writes `~/.nimbus/installed-version` for version pin.
+- **`src/onboard/recoveryPrompt.ts`** — per-reason recovery UX with TTY choice prompt.
+
 ## [0.2.2-alpha] — 2026-04-16
 
 ### Fixed

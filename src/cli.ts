@@ -122,7 +122,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.1.0-dev\n');
+      process.stdout.write('nimbus-os 0.2.3-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -160,7 +160,43 @@ async function main(): Promise<number> {
       const { runKeyCli } = await import('./key/index.ts');
       return runKeyCli({ argv: args.slice(1) });
     }
+    case 'doctor': {
+      const { runDoctor } = await import('./cli/commands/doctor.ts');
+      return runDoctor();
+    }
+    case 'vault': {
+      const { runVault } = await import('./cli/commands/vault.ts');
+      return runVault(args.slice(1));
+    }
+    case 'backup': {
+      const { runBackup } = await import('./cli/commands/backup.ts');
+      return runBackup(args.slice(1));
+    }
     case undefined: {
+      // Detect upgrade banner
+      if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
+        const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
+          await import('./onboard/upgradeDetector.ts');
+        const current = '0.2.3-alpha';
+        const installed = await readInstalledVersion();
+        if (installed && installed !== current) {
+          process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);
+          await printUpgradeNote(installed, current);
+        }
+        await writeInstalledVersion(current);
+      }
+
+      // Auto-detect vault issues before boot
+      if (!process.env['NIMBUS_SKIP_DIAGNOSE']) {
+        const { diagnoseVault } = await import('./platform/secrets/diagnose.ts');
+        const vaultStatus = await diagnoseVault();
+        if (!vaultStatus.ok && vaultStatus.reason !== 'missing_file') {
+          const { runRecoveryPrompt } = await import('./onboard/recoveryPrompt.ts');
+          const handled = await runRecoveryPrompt(vaultStatus, { tty: process.stdin.isTTY });
+          if (!handled) return 2;
+        }
+      }
+
       const { getActiveWorkspace } = await import('./core/workspace.ts');
       const active = await getActiveWorkspace();
       if (!active) {
@@ -184,17 +220,21 @@ function printHelp(): void {
 
 Usage: nimbus [command] [args]
 
-Commands (v0.1 MVP):
+Commands:
   (default)  Enter interactive AI OS session in active workspace
              Flags: --dangerously-skip-permissions (requires NIMBUS_BYPASS_CONFIRMED=1)
   init       Onboarding wizard — create first workspace + SOUL.md, then enters REPL
              Flags: --name <name>  --location <dir>  --force  --no-prompt  --no-chat
   key        Manage provider API keys (set/list/delete/test)
              Flags: --key-stdin  --key-from-env <VAR>  --base-url <url>  --test  --skip-test  --yes
+  doctor     Health check — platform, vault, permissions (exit 0=OK, 1=issues)
+  vault      Manage encrypted secrets vault
+             Subcommands: reset [--yes]  status
+  backup     Workspace backup and restore
+             Subcommands: create [--out FILE]  restore <file>  list
   cost       View token + USD usage (v0.2)
 
 Future versions:
-  status     System status overview (v0.3)
   daemon     Install/manage background service (v0.4)
 
 Run \`nimbus <command> --help\` for command details.
