@@ -17,9 +17,11 @@ files_touched:
   - src/permissions/gate.ts
   - src/channels/cli/repl.ts
   - src/channels/cli/render.ts
+  - src/channels/cli/slashAutocomplete.ts
   - tests/permissions/gate.test.ts
   - tests/tools/loopAdapter.test.ts
   - tests/channels/cli/repl.prompt.test.ts
+  - tests/channels/cli/repl.confirmReplExit.test.ts
 ---
 
 # Confirm flow wiring — destructive tools prompt instead of silent error
@@ -143,3 +145,22 @@ export async function confirm(question: string): Promise<'allow' | 'deny' | 'alw
      v0.4 persistence design.
   Net user impact: confirm flow now actually writes the file. Regression
   tests cover both `'allow'` and `'always'` plus the gate-fallback cache.
+- 2026-04-16 @hiepht: v0.3.5 **URGENT fix — REPL exited after tool confirm**.
+  After a successful `y` confirm + tool completion, the CLI silently exited
+  back to the shell mid-REPL. Root cause: `makeOnAsk` used
+  `node:readline.createInterface({terminal:false})` to read the y/n token.
+  `readline.close()` explicitly pauses the underlying stream (documented
+  Node behaviour, preserved in Bun 1.3). When control returned to the
+  outer `slashAutocomplete.readLine()` which re-enabled raw mode and
+  attached a `'data'` listener, stdin stayed paused — `on('data', ...)`
+  does not auto-resume an explicitly paused stream. With no pending I/O,
+  Bun emptied the event loop and exited with code 0. User saw the shell
+  prompt return after `✓ done`.
+  Fix: (1) rewrite `makeOnAsk` to read the confirm token via a raw-mode
+  `'data'` listener directly — no inner readline, no pause. (2) Defence
+  in depth: `slashAutocomplete.readLine()` now always calls
+  `input.resume()` after attaching its data listener so the REPL
+  recovers even if any other code path pauses the stream.
+  Regression tests: `tests/channels/cli/repl.confirmReplExit.test.ts`
+  covers the confirm-then-re-read cycle, the resume-on-entry contract,
+  and the paused-stream recovery path.

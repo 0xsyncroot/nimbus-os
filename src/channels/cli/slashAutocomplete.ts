@@ -465,6 +465,13 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
 
       if (typeof input.setEncoding === 'function') input.setEncoding('utf8');
       input.on('data', onData);
+      // v0.3.5 URGENT FIX (defense-in-depth): a prior inner readline may have
+      // left stdin paused (node:readline close() pauses the underlying
+      // stream). Attaching a 'data' listener does NOT auto-resume an
+      // explicitly paused stream in Bun 1.3 — the REPL would silently
+      // exit mid-session because the event loop has nothing holding it open.
+      // Always call resume() to guarantee the stream delivers keystrokes.
+      (input as { resume?: () => void }).resume?.();
 
       // Draw initial prompt
       safeWrite(() => {

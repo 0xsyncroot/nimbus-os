@@ -4,6 +4,69 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.5-alpha] — 2026-04-16 — URGENT patch (REPL exit after tool confirm)
+
+User repro flow (v0.3.4):
+
+```
+░▒▓ nimbus ready  ·  personal  ·  gpt-5.4-mini
+personal › paste telegram bot token
+  ⋯ writing telegram.botToken
+[ASK] Cho em ghi file telegram.botToken? [Y/n/always/never] y
+  ✓ done
+Được — em thử lại và đã lưu cấu hình vào telegram.botToken.
+
+personal › root@hiepht:~/develop/nimbus-cli/nimbus-test#
+```
+
+After `✓ done` + assistant reply, the CLI silently exits back to the shell
+mid-REPL. User cannot continue — catastrophic for a persistent AI OS.
+
+### Fixed
+
+- **REPL exits after tool confirm** (SPEC-825 v0.3) — root cause in
+  `src/channels/cli/repl.ts::makeOnAsk`: the y/n prompt read the answer
+  via `node:readline.createInterface({terminal:false})` on the shared
+  stdin, then called `rl.close()`. `readline.close()` explicitly pauses
+  the underlying stream (Node docs; preserved in Bun 1.3). Control returns
+  to `slashAutocomplete.readLine()` which re-enables raw mode and attaches
+  a `'data'` listener — but attaching a data listener does NOT auto-resume
+  an *explicitly* paused stream. With no active I/O, Bun empties the event
+  loop and exits with code 0. User sees the shell prompt.
+
+  Minimal repro (pty-level): raw-mode handler → readline round-trip →
+  raw-mode handler never receives bytes, process exits 0. Verified against
+  Bun 1.3.12.
+
+  Fix (two layers):
+  1. Rewrite `makeOnAsk` to read the confirm token directly via a raw-mode
+     `'data'` listener — identical mechanism to `slashAutocomplete`, no
+     inner readline, no pause. Cleanup restores line mode on finish.
+  2. Defence in depth: `slashAutocomplete.readLine()` now always calls
+     `input.resume()` after setting raw mode + attaching its data listener,
+     so the REPL recovers even if any other future code path leaves stdin
+     paused.
+
+  LoC delta: +32 / -16 across 2 files; 1 new test file (220 LoC).
+
+### Added (regression tests)
+
+- `tests/channels/cli/repl.confirmReplExit.test.ts` — 10 tests covering:
+  - `parseConfirmAnswer` token mapping (y/yes/empty → allow; n/no/never
+    → deny; always/a → always)
+  - `makeOnAsk` resolves y/n/always/ctrl-c without pausing stdin
+  - after `makeOnAsk` resolve, a downstream data listener still receives
+    bytes on the same stream (REPL re-entry contract)
+  - `slashAutocomplete.readLine()` always calls `input.resume()` on entry
+  - `slashAutocomplete.readLine()` recovers from a pre-paused stream
+
+### Known limitations
+
+- Secondary i18n nit (label still shows English `⋯ writing ...` on
+  `LANG=C.UTF-8` / WSL) is not fixed in this URGENT patch. Planned for
+  v0.3.6: either default VN when recent turn contains VN content, or
+  detect workspace SOUL language hint, or add `NIMBUS_LANG=vi` override.
+
 ## [0.3.4-alpha] — 2026-04-16 — URGENT patch (3 user-caught regressions from v0.3.3)
 
 User repro flow: paste Telegram bot token → `[ASK] Cho em ghi file
