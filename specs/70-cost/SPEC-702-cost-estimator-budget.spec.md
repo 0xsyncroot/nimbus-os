@@ -1,7 +1,7 @@
 ---
 id: SPEC-702
 title: Cost estimator + budget enforcement modes
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16

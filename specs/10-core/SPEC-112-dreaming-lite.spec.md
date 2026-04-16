@@ -1,11 +1,11 @@
 ---
 id: SPEC-112
 title: Dreaming Lite — end-of-session MEMORY.md consolidation
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.2
 layer: core
 depends_on: [META-005, SPEC-102, SPEC-104, SPEC-304, SPEC-701]
@@ -124,3 +124,4 @@ export interface MemoryConsolidator {
 ## 10. Changelog
 
 - 2026-04-15 @hiepht: draft initial (moved from v0.5 to v0.2 per plan revision)
+- 2026-04-16 @hiepht: implemented v0.2 Lite — heuristic-only extraction (no LLM call); `src/context/memoryConsolidation.ts` + 26 unit tests green

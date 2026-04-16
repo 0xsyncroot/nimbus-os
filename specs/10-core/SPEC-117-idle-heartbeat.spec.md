@@ -1,11 +1,11 @@
 ---
 id: SPEC-117
 title: Idle heartbeat — soft suggestion on long REPL idle
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.2
 layer: core
 depends_on: [SPEC-102, SPEC-104, SPEC-501, SPEC-701, SPEC-801]

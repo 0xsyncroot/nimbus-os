@@ -1,11 +1,11 @@
 ---
 id: SPEC-116
 title: Thinking traces capture — record extended thinking blocks
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.2
 layer: core
 depends_on: [META-004, SPEC-102, SPEC-202]
