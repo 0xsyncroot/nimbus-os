@@ -450,25 +450,23 @@ print_success() {
   printf "    %bnimbus%b                                  # Start chatting\n" "$CYAN" "$RESET"
   printf "\n"
 
-  # CRITICAL: bash/zsh caches command→path mappings in the hash table. Even if
-  # we removed an old binary in cleanup_existing(), the user's shell still
-  # resolves `nimbus` to the old (now-deleted) path until `hash -r` runs.
-  # We can't modify the parent shell, so give clear instructions.
-  REMOVED_ANY="${REMOVED_ANY:-0}"
-  if [ "$REMOVED_ANY" = "1" ]; then
-    warn "IMPORTANT: your shell has cached the old binary path. Run this now:"
-    printf "    %bhash -r%b        # clear bash command cache\n" "$CYAN" "$RESET"
-    printf "    %bnimbus --version%b   # verify 0.2.5-alpha\n" "$CYAN" "$RESET"
-    printf "  Or just open a new terminal.\n\n"
-  fi
+  # CRITICAL: bash/zsh caches command→path mappings in the hash table. That cache
+  # persists across terminal sessions until manually cleared. Even if we did
+  # NOT remove any binary in THIS run, the user's shell may still have a stale
+  # entry from a PREVIOUS install. Showing the reminder unconditionally is
+  # cheap and idempotent — running `hash -r` on a clean hash is a no-op.
+  warn "IMPORTANT — activate nimbus in your current shell. Run this now:"
+  printf "    %bhash -r%b               # clear bash/zsh command cache\n" "$CYAN" "$RESET"
+  printf "    %bnimbus --version%b     # should print %s\n" "$CYAN" "$RESET" "$NIMBUS_VERSION"
+  printf "  Or open a new terminal — new shells read PATH fresh.\n\n"
 
   # Check if INSTALL_DIR is already on PATH (current process)
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
-      info "PATH already includes ${INSTALL_DIR} — nimbus is ready to use."
+      info "PATH already includes ${INSTALL_DIR}."
       ;;
     *)
-      warn "Restart your shell or run the following to use nimbus immediately:"
+      warn "PATH does NOT yet include ${INSTALL_DIR}. Run:"
       printf "    %bsource %s%b\n" "$CYAN" "$CHOSEN_RC" "$RESET"
       ;;
   esac
