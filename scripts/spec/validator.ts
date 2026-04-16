@@ -26,7 +26,7 @@ const REQUIRED_SECTIONS_META = [
   'evolution policy',
 ];
 
-const VALID_FILE_PREFIXES = ['src/', 'tests/', 'bench/', 'scripts/'];
+const VALID_FILE_PREFIXES = ['src/', 'tests/', 'bench/', 'scripts/', 'examples/'];
 const VALID_MD_PREFIX = 'src/onboard/templates/';
 
 const WORD_COUNT_WARN = 800;

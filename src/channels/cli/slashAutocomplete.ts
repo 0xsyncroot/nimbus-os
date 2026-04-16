@@ -1,7 +1,13 @@
-// slashAutocomplete.ts — SPEC-801: slash command autocomplete dropdown for TTY REPL.
+// slashAutocomplete.ts — SPEC-801 + SPEC-822 T6/T8/T9: slash command autocomplete dropdown for TTY REPL.
 // Pure readline + ANSI, no new deps. Non-TTY falls back to caller's readline path.
 
 import type { SlashCommand } from './slashCommands.ts';
+import {
+  renderList,
+  renderArgCard,
+  renderEmpty,
+  diffAndWrite,
+} from './slashRenderer.ts';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -30,6 +36,24 @@ export interface AutocompleteOptions {
 }
 
 // ---------------------------------------------------------------------------
+// SPEC-822 T8/T9: Feature flag + fallback detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when polished renderer should be used.
+ * NIMBUS_SLASH_UI=plain forces old renderer.
+ * Auto-fallback when: not TTY, cols < 60, or TERM=dumb.
+ */
+export function shouldUsePolishedRenderer(isTTY: boolean, cols: number): boolean {
+  const flag = process.env['NIMBUS_SLASH_UI'];
+  if (flag === 'plain') return false;
+  if (process.env['TERM'] === 'dumb') return false;
+  if (!isTTY) return false;
+  if (cols < 60) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // ANSI helpers
 // ---------------------------------------------------------------------------
 
@@ -40,14 +64,6 @@ const CLEAR_BELOW = `${ESC}[J`;
 const INVERT_ON = `${ESC}[7m`;
 const INVERT_OFF = `${ESC}[0m`;
 const CLEAR_LINE = `${ESC}[2K\r`;
-
-function moveCursorRight(n: number): string {
-  return n > 0 ? `${ESC}[${n}C` : '';
-}
-
-function moveToNextLine(n: number): string {
-  return n > 0 ? `${ESC}[${n}B` : '';
-}
 
 // ---------------------------------------------------------------------------
 // Filter + sort helpers
@@ -168,6 +184,8 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
   let dropdownState: DropdownState = { isOpen: false, selectedName: null, scrollTop: 0 };
   let filtered: SlashCommand[] = [];
   let renderLock: Promise<void> = Promise.resolve();
+  // SPEC-822 T6: track last rendered lines for partial redraw diff
+  let lastRenderedLines: string[] = [];
 
   function safeWrite(fn: () => void): void {
     renderLock = renderLock.then(() => {
@@ -213,8 +231,9 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
 
   function redraw(): void {
     const prompt = promptStr();
-    const promptLen = getPromptLen();
-    const bufLen = buffer.length;
+    const currentCols = cols();
+    const isTTY = (input as { isTTY?: boolean }).isTTY === true;
+    const polished = shouldUsePolishedRenderer(isTTY, currentCols);
 
     // BUG FIX: don't SAVE_CURSOR/RESTORE_CURSOR + moveCursorRight around the
     // redraw. SAVE captures the PRE-redraw cursor position (often wrong after
@@ -223,15 +242,44 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
     // keystroke. The redraw writes prompt+buffer starting at col 0; after
     // that write, cursor is exactly at end-of-buffer already — no
     // repositioning needed.
-    let out = '\r' + CLEAR_LINE + CLEAR_BELOW + prompt + buffer;
+    const out = '\r' + CLEAR_LINE + CLEAR_BELOW + prompt + buffer;
     output.write(out);
 
-    if (dropdownState.isOpen && filtered.length > 0) {
-      // Cursor is currently at end-of-buffer. Save it, render dropdown BELOW,
-      // then restore so subsequent typing appears on the prompt line.
-      output.write(SAVE_CURSOR);
-      renderDropdown(output, filtered, dropdownState, promptLen, bufLen, cols());
-      output.write(RESTORE_CURSOR);
+    if (polished) {
+      // SPEC-822 T2/T3/T4/T6: polished renderer with partial redraw
+      let nextLines: string[] = [];
+
+      // Detect render state from buffer shape
+      const argCardMatch = buffer.match(/^\/(\w[\w-]*)\s+/);
+      if (argCardMatch) {
+        // trailing-space state: find the command
+        const cmdName = argCardMatch[1]!;
+        const cmd = commands().find((c) => c.name === cmdName);
+        if (cmd) {
+          nextLines = renderArgCard(cmd, currentCols);
+        }
+      } else if (buffer === '/') {
+        // empty state: bare '/'
+        nextLines = renderEmpty(commands(), currentCols);
+      } else if (dropdownState.isOpen && filtered.length > 0) {
+        // list state: filter active
+        const selIdx = filtered.findIndex((c) => c.name === dropdownState.selectedName);
+        nextLines = renderList({ kind: 'list', filtered, selected: selIdx >= 0 ? selIdx : 0 }, currentCols);
+      }
+
+      if (nextLines.length > 0 || lastRenderedLines.length > 0) {
+        output.write(SAVE_CURSOR);
+        diffAndWrite(lastRenderedLines, nextLines, output);
+        output.write(RESTORE_CURSOR);
+        lastRenderedLines = nextLines;
+      }
+    } else {
+      // Legacy renderer (T8/T9 fallback)
+      if (dropdownState.isOpen && filtered.length > 0) {
+        output.write(SAVE_CURSOR);
+        renderDropdown(output, filtered, dropdownState, getPromptLen(), buffer.length, currentCols);
+        output.write(RESTORE_CURSOR);
+      }
     }
   }
 
@@ -289,6 +337,7 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
       const result = buffer;
       dropdownState = { isOpen: false, selectedName: null, scrollTop: 0 };
       filtered = [];
+      lastRenderedLines = [];
       safeWrite(() => {
         // clear dropdown lines and emit newline to finalize
         output.write(`${SAVE_CURSOR}${CLEAR_BELOW}${RESTORE_CURSOR}`);
@@ -312,6 +361,7 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
 
     if (key.type === 'esc') {
       dropdownState = { ...dropdownState, isOpen: false };
+      lastRenderedLines = [];
       safeWrite(() => redraw());
       return;
     }
@@ -383,6 +433,7 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
       buffer = '';
       dropdownState = { isOpen: false, selectedName: null, scrollTop: 0 };
       filtered = [];
+      lastRenderedLines = [];
 
       // Enable raw mode
       if (typeof input.setRawMode === 'function') {

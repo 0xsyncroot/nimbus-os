@@ -1,5 +1,12 @@
 // Canonical IR — provider-agnostic message/chunk/request types (META-004, SPEC-201).
 // Pure TS: no Bun, no node:, no imports from core/tools/platform/storage/channels.
+//
+// schemaVersion history:
+//   v1 — initial (2026-04-15)
+//   v2 — add CanonicalBlock.trust?: 'trusted'|'untrusted' (2026-04-16, SPEC-131)
+//        Migration: missing trust field → default 'trusted' (backward compat)
+
+export const IR_SCHEMA_VERSION = 2;
 
 export interface ToolDefinition {
   readonly name: string;
@@ -7,20 +14,28 @@ export interface ToolDefinition {
   readonly inputSchema: Record<string, unknown>;
 }
 
+/**
+ * trust field (schemaVersion=2, SPEC-131):
+ *   'trusted'   — content from first-party (parent agent, tools).
+ *   'untrusted' — content from sub-agent; model must treat as data, not instructions.
+ *   missing     → default 'trusted' (backward compat with v1).
+ */
 export type CanonicalBlock =
-  | { type: 'text'; text: string; cacheHint?: 'ephemeral' }
+  | { type: 'text'; text: string; cacheHint?: 'ephemeral'; trust?: 'trusted' | 'untrusted'; origin?: string }
   | {
       type: 'image';
       source: { kind: 'base64' | 'url'; data: string; mimeType: string };
+      trust?: 'trusted' | 'untrusted';
     }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_use'; id: string; name: string; input: unknown; trust?: 'trusted' | 'untrusted' }
   | {
       type: 'tool_result';
       toolUseId: string;
       content: string | CanonicalBlock[];
       isError?: boolean;
+      trust?: 'trusted' | 'untrusted';
     }
-  | { type: 'thinking'; text: string; signature?: string };
+  | { type: 'thinking'; text: string; signature?: string; trust?: 'trusted' | 'untrusted' };
 
 export type CanonicalBlockType = CanonicalBlock['type'];
 

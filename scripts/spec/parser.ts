@@ -8,7 +8,7 @@ export const SpecFrontmatterSchema = z
   .object({
     id: z.string().regex(/^(SPEC|META|MOD)-\d{3}$/, 'id must match (SPEC|META|MOD)-XXX'),
     title: z.string().min(3).max(80),
-    status: z.enum(['draft', 'approved', 'in-progress', 'implemented', 'deprecated']),
+    status: z.enum(['draft', 'approved', 'in-progress', 'implemented', 'deprecated', 'superseded']),
     version: z.string(),
     owner: z.string(),
     created: z.union([z.string(), z.date()]).transform((v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v)),
@@ -19,6 +19,7 @@ export const SpecFrontmatterSchema = z
     blocks: z.array(z.string()).default([]),
     estimated_loc: z.number().int().nonnegative().default(0),
     files_touched: z.array(z.string()).default([]),
+    supersededBy: z.string().optional(),
   })
   .refine((d) => (d.id.startsWith('SPEC-') ? !!d.release : true), {
     message: 'release required for SPEC-* (not META/MOD)',

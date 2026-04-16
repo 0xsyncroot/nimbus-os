@@ -23,13 +23,15 @@ Define a single provider-agnostic wire format that core loop, storage, and chann
 
 ### 2.1 CanonicalBlock union (Anthropic-shaped, expressive superset)
 
+schemaVersion=2: all variants carry optional `trust?: 'trusted'|'untrusted'`. Missing field → 'trusted' default.
+
 ```ts
 export type CanonicalBlock =
-  | { type: 'text'; text: string; cacheHint?: 'ephemeral' }
-  | { type: 'image'; source: { kind: 'base64' | 'url'; data: string; mimeType: string } }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
-  | { type: 'tool_result'; toolUseId: string; content: string | CanonicalBlock[]; isError?: boolean }
-  | { type: 'thinking'; text: string; signature?: string }
+  | { type: 'text'; text: string; cacheHint?: 'ephemeral'; trust?: 'trusted'|'untrusted'; origin?: string }
+  | { type: 'image'; source: { kind: 'base64' | 'url'; data: string; mimeType: string }; trust?: 'trusted'|'untrusted' }
+  | { type: 'tool_use'; id: string; name: string; input: unknown; trust?: 'trusted'|'untrusted' }
+  | { type: 'tool_result'; toolUseId: string; content: string | CanonicalBlock[]; isError?: boolean; trust?: 'trusted'|'untrusted' }
+  | { type: 'thinking'; text: string; signature?: string; trust?: 'trusted'|'untrusted' }
 
 export interface CanonicalMessage {
   role: 'user' | 'assistant' | 'system'
@@ -117,6 +119,16 @@ Adding new CanonicalBlock variant:
 - Must be gracefully ignored by old providers (e.g., thinking — OpenAI strips, no crash)
 - Bump IR schema version in storage migration
 
-## 6. Changelog
+## 6. Schema Versioning
+
+| Version | Date | Change |
+|---------|------|--------|
+| v1 | 2026-04-15 | Initial release |
+| v2 | 2026-04-16 | Add `trust?: 'trusted'\|'untrusted'` optional field to all CanonicalBlock variants (SPEC-131). Missing field → default `'trusted'` (backward compat). |
+
+Migration rule: consumers reading stored CanonicalBlocks from v1 storage must treat absent `trust` as `'trusted'`.
+
+## 7. Changelog
 
 - 2026-04-15 @hiepht: initial + approve
+- 2026-04-16 @hiepht: v2 — add `trust?` + `origin?` fields to CanonicalBlock (SPEC-131 sub-agent trust boundary). schemaVersion bumped 1→2. Backward compat: missing field = 'trusted'.

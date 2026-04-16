@@ -1,4 +1,6 @@
-// loop.ts — SPEC-103: agent turn generator integrating plan detect, task spec, prompts, tools.
+// loop.ts — SPEC-103: agent turn generator integrating plan detect, prompts, tools.
+// SPEC-132: taskSpec / INTERNAL_PLAN removed. Plan-as-tool (TodoWriteTool) replaces it.
+//           planDetector retained as NUDGE emitter only.
 
 import { ErrorCode, NimbusError, classify } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
@@ -13,14 +15,6 @@ import { buildSystemPrompt } from './prompts.ts';
 import { loadWorkspaceMemory } from './workspaceMemory.ts';
 import { detectPlanMode, renderPlanCue } from './planDetector.ts';
 import { snapshotEnvironment, serializeEnvironment } from './environment.ts';
-import {
-  createTaskSpecGenerator,
-  displaySpecInline,
-  highRiskGate,
-  persistSpecAsync,
-  type HighRiskConfirmer,
-  type TaskSpec,
-} from './taskSpec.ts';
 import {
   breakerKey,
   createBreaker,
@@ -105,9 +99,6 @@ export interface RunTurnOptions {
   userMessage: string;
   tools?: ToolExecutor;
   breaker?: CircuitBreaker;
-  confirmer?: HighRiskConfirmer;
-  generateSpec?: boolean;
-  specConfirmAlways?: boolean;
   /** SPEC-121: prior conversation messages for cross-turn context rehydration. */
   priorMessages?: CanonicalMessage[];
 }
@@ -120,20 +111,6 @@ function providerErrorFamily(code: ErrorCode): ErrorFamily | null {
     case ErrorCode.P_AUTH: return 'P_AUTH';
     case ErrorCode.P_INVALID_REQUEST: return 'P_INVALID_REQUEST';
     default: return null;
-  }
-}
-
-async function maybeGenerateSpec(opts: RunTurnOptions, turnId: string): Promise<TaskSpec | null> {
-  if (opts.generateSpec === false) return null;
-  const decision = detectPlanMode(opts.userMessage);
-  const gen = createTaskSpecGenerator({ provider: opts.ctx.provider, model: opts.ctx.model });
-  if (!gen.shouldGenerate(opts.userMessage, decision)) return null;
-  try {
-    const env = await snapshotEnvironment({});
-    return await gen.generate(opts.userMessage, env, turnId);
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, 'task spec generation failed; executing directly');
-    return null;
   }
 }
 
@@ -177,44 +154,15 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
       } as Omit<import('./sessionTypes.ts').StoredSessionEvent, 'eventId'>).catch(() => undefined);
     }
 
-    // Task spec (SPEC-110) — fire-and-forget display, then persist, then high-risk gate
-    const spec = await maybeGenerateSpec(opts, turnId);
-    if (spec) {
-      // SPEC-110 v2: collapse to 1-line FYI (first sentence of outcomes).
-      // Full view accessible via /spec-show (TODO: implement slash command).
-      const firstSentence = spec.outcomes.split(/[.!?]/)[0]?.trim() ?? spec.outcomes;
-      const summary = firstSentence;
-      yield { kind: 'spec_announce', summary };
-      publishSafe(bus, TOPICS.session.specGenerated, {
-        type: TOPICS.session.specGenerated,
-        sessionId: ctx.sessionId,
-        turnId,
-        summary,
-        ts: Date.now(),
-      });
-      await appendEvent(ctx.wsId, ctx.sessionId, {
-        ts: Date.now(),
-        type: 'spec_generated',
-        turnId,
-        summary,
-      } as Omit<import('./sessionTypes.ts').StoredSessionEvent, 'eventId'>).catch(() => undefined);
-      persistSpecAsync(spec, ctx.wsId, ctx.sessionId);
-      if (opts.confirmer) {
-        const forceAlways = opts.specConfirmAlways === true;
-        const proceed = await highRiskGate(spec, opts.confirmer, forceAlways);
-        if (!proceed) {
-          outcome = 'cancelled';
-          throw new NimbusError(ErrorCode.U_BAD_COMMAND, { reason: 'user_denied_high_risk', turnId });
-        }
-      }
-    }
-
     // Environment snapshot (SPEC-109)
     const env = await snapshotEnvironment({ abort: ctx.abort.turn.signal });
     const envXml = serializeEnvironment(env);
+    // SPEC-132: planDetector repurposed as NUDGE emitter.
+    // planCue is a hint line injected into the system prompt when a complex task is detected,
+    // signalling the model to consider calling TodoWrite. No out-of-band LLM spec generated.
     const planCue = renderPlanCue(planDecision);
     const caps = ctx.provider.capabilities();
-    const systemBlocks = buildSystemPrompt({ memory, caps, planCue, environmentXml: envXml, taskSpec: spec ?? undefined });
+    const systemBlocks = buildSystemPrompt({ memory, caps, planCue, environmentXml: envXml });
 
     const tools = opts.tools?.listTools();
     const maxCtxTokens = ctx.provider.capabilities().maxContextTokens;

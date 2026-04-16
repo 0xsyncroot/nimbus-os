@@ -135,7 +135,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.2.8-alpha\n');
+      process.stdout.write('nimbus-os 0.3.0-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -185,12 +185,40 @@ async function main(): Promise<number> {
       const { runBackup } = await import('./cli/commands/backup.ts');
       return runBackup(args.slice(1));
     }
+    case 'status': {
+      const { runStatus } = await import('./cli/commands/status.ts');
+      return runStatus(args.slice(1));
+    }
+    case 'health': {
+      const { runHealth } = await import('./cli/commands/health.ts');
+      return runHealth(args.slice(1));
+    }
+    case 'metrics': {
+      const { runMetrics } = await import('./cli/commands/metrics.ts');
+      return runMetrics(args.slice(1));
+    }
+    case 'errors': {
+      const { runErrors } = await import('./cli/commands/errors.ts');
+      return runErrors(args.slice(1));
+    }
+    case 'trace': {
+      const { runTrace } = await import('./cli/commands/trace.ts');
+      return runTrace(args.slice(1));
+    }
+    case 'audit': {
+      const { runAudit } = await import('./cli/commands/audit.ts');
+      return runAudit(args.slice(1));
+    }
+    case 'skill': {
+      const { runSkillCli } = await import('./skills/registry/skillCli.ts');
+      return runSkillCli(args.slice(1));
+    }
     case undefined: {
       // Detect upgrade banner
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.2.8-alpha';
+        const current = '0.3.0-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);
@@ -246,6 +274,15 @@ Commands:
   backup     Workspace backup and restore
              Subcommands: create [--out FILE]  restore <file>  list
   cost       View token + USD usage (v0.2)
+  status     1-line overview: OK | last error | today cost
+  health     Subsystem health + memory + disk  [--json]
+  metrics    p50/p95/p99 + tokens + cost       [--since 1h|1d] [--json]
+  errors     Error counts by code              [--since] [--code X_*] [--json]
+  trace      Turn event tree                   <turnId> [--json]
+  audit      Security events + exec/write log  [--since] [--severity] [--json]
+  skill      Manage skills from the registry
+             Subcommands: search [query]  install <name[@ver]>  list  info <name>
+                          upgrade <name>  revoke <name>  reassess <name>  audit
 
 Future versions:
   daemon     Install/manage background service (v0.4)

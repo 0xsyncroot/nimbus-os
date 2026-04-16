@@ -10,11 +10,16 @@ import { createBashTool } from './builtin/Bash.ts';
 import { createMemoryTool } from './builtin/Memory.ts';
 import { createWebSearchTool } from './builtin/WebSearch.ts';
 import { createWebFetchTool } from './builtin/WebFetch.ts';
+import { createAgentTool } from './agentTool.ts';
+import { createSendMessageTool } from './sendMessage.ts';
+import { createReceiveMessageTool } from './receiveMessage.ts';
 
 export interface CreateDefaultsOptions {
   includeBash?: boolean;
   includeMemory?: boolean;
   includeWeb?: boolean;
+  /** Include sub-agent coordination tools (AgentTool, SendMessage, ReceiveMessage). Default: true. */
+  includeSubAgent?: boolean;
 }
 
 export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolRegistry {
@@ -29,6 +34,11 @@ export function createDefaultRegistry(opts: CreateDefaultsOptions = {}): ToolReg
   if (opts.includeWeb !== false) {
     registry.register(createWebSearchTool());
     registry.register(createWebFetchTool());
+  }
+  if (opts.includeSubAgent !== false) {
+    registry.register(createAgentTool());
+    registry.register(createSendMessageTool());
+    registry.register(createReceiveMessageTool());
   }
   return registry;
 }

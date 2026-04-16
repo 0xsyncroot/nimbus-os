@@ -1,10 +1,12 @@
 // prompts.ts — SPEC-105: deterministic system prompt assembly with cache breakpoints.
+// SPEC-122: [SESSION_PREFS] block injection.
+// SPEC-132: [INTERNAL_PLAN] / taskSpec removed — TodoWriteTool replaces out-of-band spec.
 
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { logger } from '../observability/logger.ts';
 import type { CanonicalBlock, ProviderCapabilities } from '../ir/types.ts';
 import type { WorkspaceMemory } from './memoryTypes.ts';
-import type { TaskSpec } from './taskSpec.ts';
+import type { SessionPreferences } from './sessionPreferences.ts';
 import {
   AUTONOMY_SECTION,
   PROMPT_SIZE_ERROR_BYTES,
@@ -19,7 +21,21 @@ export interface BuildPromptInput {
   caps: ProviderCapabilities;
   planCue?: string;
   environmentXml?: string;
-  taskSpec?: TaskSpec;
+  sessionPrefs?: SessionPreferences;
+}
+
+/**
+ * Build the [SESSION_PREFS] block string.
+ * Returns empty string when prefs object has no keys set (block omitted from prompt).
+ */
+export function buildSessionPrefsBlock(prefs: SessionPreferences): string {
+  const lines: string[] = [];
+  if (prefs.agentName) lines.push(`agentName: ${prefs.agentName}`);
+  if (prefs.pronoun) lines.push(`pronoun: ${prefs.pronoun}`);
+  if (prefs.language) lines.push(`language: ${prefs.language}`);
+  if (prefs.voice) lines.push(`voice: ${prefs.voice}`);
+  if (lines.length === 0) return '';
+  return `[SESSION_PREFS]\n${lines.join('\n')}\n`;
 }
 
 function textBlock(text: string, cache?: 'ephemeral'): CanonicalBlock {
@@ -28,7 +44,7 @@ function textBlock(text: string, cache?: 'ephemeral'): CanonicalBlock {
 }
 
 export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
-  const { memory, caps, planCue, environmentXml, taskSpec } = input;
+  const { memory, caps, planCue, environmentXml, sessionPrefs } = input;
   const explicit = caps.promptCaching === 'explicit';
 
   const blocks: CanonicalBlock[] = [];
@@ -46,6 +62,14 @@ export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
     }
   }
 
+  // 2b. SESSION_PREFS — injected after IDENTITY, before autonomy (SPEC-122)
+  if (sessionPrefs) {
+    const prefsBlock = buildSessionPrefsBlock(sessionPrefs);
+    if (prefsBlock.length > 0) {
+      blocks.push(textBlock(prefsBlock));
+    }
+  }
+
   // 3-6. Static sections
   blocks.push(textBlock(AUTONOMY_SECTION));
   if (planCue && planCue.length > 0) {
@@ -58,24 +82,8 @@ export function buildSystemPrompt(input: BuildPromptInput): CanonicalBlock[] {
   // 7. MEMORY
   blocks.push(textBlock(`[MEMORY]\n${memory.memoryMd.body.trim()}\n`));
 
-  // 7b. INTERNAL_PLAN — injected when a TaskSpec is present (SPEC-110 v2)
-  if (taskSpec) {
-    const outcomes = taskSpec.outcomes.length > 200
-      ? taskSpec.outcomes.slice(0, 200) + '…'
-      : taskSpec.outcomes;
-    const actionLines = taskSpec.actions
-      .slice(0, 5)
-      .map((a) => `${a.tool}: ${a.reason}`)
-      .join('\n');
-    const planBlock = [
-      '[INTERNAL_PLAN]',
-      `outcomes: ${outcomes}`,
-      actionLines.length > 0 ? `planned_actions:\n${actionLines}` : '',
-      '',
-      'Follow this plan by calling the listed tools. If a listed tool is unavailable in your tool schemas, state that clearly instead of silently skipping.',
-    ].filter((l) => l !== '').join('\n');
-    blocks.push(textBlock(`${planBlock}\n`));
-  }
+  // NOTE: [INTERNAL_PLAN] / taskSpec removed by SPEC-132.
+  // Plan-as-tool (TodoWriteTool) replaces out-of-band spec injection.
 
   // 8. TOOLS_AVAILABLE — final cacheable breakpoint
   blocks.push(

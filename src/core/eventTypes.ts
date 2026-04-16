@@ -25,6 +25,12 @@ export const TOPICS = Object.freeze({
     overflow: 'bus.overflow',
     subscriberError: 'bus.subscriber_error',
   },
+  channel: {
+    inbound: 'channel.inbound',
+  },
+  security: {
+    event: 'security.event',
+  },
 } as const);
 
 export type SessionEvent =
@@ -67,6 +73,25 @@ export type BusSubscriberErrorEvent = {
   error: string;
 };
 
+export type ChannelInboundEvent = {
+  type: 'channel.inbound';
+  adapterId: string;
+  workspaceId: string;
+  userId: string;
+  text: string;
+  /** Adapter-specific native event — opaque to core. */
+  raw: unknown;
+};
+
+export type SecurityEvent = {
+  type: 'security.event';
+  adapterId: string;
+  reason: string;
+  /** User identifier — never includes message content (privacy). */
+  userId: string | number;
+  ts: number;
+};
+
 const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.session.userMsg,
   TOPICS.session.assistantMsg,
@@ -84,6 +109,8 @@ const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.breaker.probe,
   TOPICS.bus.overflow,
   TOPICS.bus.subscriberError,
+  TOPICS.channel.inbound,
+  TOPICS.security.event,
 ]);
 
 export function isRegisteredTopic(topic: string): boolean {

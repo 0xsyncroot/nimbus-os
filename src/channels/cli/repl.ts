@@ -43,7 +43,6 @@ interface ReplState {
   endpoint: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom' | undefined;
   baseUrl: string | undefined;
   mode: 'readonly' | 'default' | 'bypass';
-  specConfirmAlways: boolean;
   running: boolean;
   turnAbort: ReturnType<typeof createTurnAbort> | null;
   lastCtrlCAt: number;
@@ -174,7 +173,6 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
     baseUrl: loaded.meta.defaultBaseUrl,
     model: loaded.meta.defaultModel,
     mode: 'default',
-    specConfirmAlways: false,
     running: true,
     turnAbort: null,
     lastCtrlCAt: 0,
@@ -422,8 +420,8 @@ function makeReplContext(
     showCost: async () => {
       write(`${colors.dim('cost tracking arrives in v0.2')}\n`);
     },
-    setSpecConfirm: (mode) => {
-      state.specConfirmAlways = mode === 'always';
+    setSpecConfirm: (_mode) => {
+      // SPEC-132: spec-confirm mode removed (taskSpec superseded by TodoWriteTool)
     },
   };
 }
@@ -482,7 +480,6 @@ async function runSingleTurn(
       ctx: turnCtx,
       userMessage,
       tools: toolAdapter,
-      specConfirmAlways: state.specConfirmAlways,
       priorMessages,
     })) {
       renderer.handle(out);

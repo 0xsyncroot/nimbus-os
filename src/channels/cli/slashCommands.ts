@@ -1,4 +1,4 @@
-// slashCommands.ts — SPEC-801 T3: slash command registry + dispatcher.
+// slashCommands.ts — SPEC-801 T3 + SPEC-822 T1: slash command registry + dispatcher.
 
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
 import {
@@ -36,6 +36,15 @@ export interface SlashCommand {
   description: string;
   usage: string;
   handler: (args: string, ctx: ReplContext) => Promise<void> | void;
+  // SPEC-822 T1 — v0.3 UI polish metadata
+  /** Category for grouping in empty-picker view */
+  category?: 'session' | 'workspace' | 'model' | 'system';
+  /** Arg hint shown in arg-card, e.g. '[name]' */
+  argHint?: string;
+  /** Enum choices for single-value args, e.g. ['readonly','default','bypass'] */
+  argChoices?: string[];
+  /** Free-form arg examples, e.g. ['claude-sonnet-4-6', 'gpt-4o'] */
+  argExamples?: string[];
 }
 
 const registry = new Map<string, SlashCommand>();
@@ -90,6 +99,7 @@ export function registerDefaultCommands(): void {
     name: 'help',
     description: 'Show available commands',
     usage: '/help',
+    category: 'system',
     handler: (_args, ctx) => {
       const lines = listCommands().map((c) => `  /${c.name.padEnd(16)} ${c.description}`);
       ctx.write(['Commands:', ...lines].join('\n'));
@@ -99,18 +109,23 @@ export function registerDefaultCommands(): void {
     name: 'quit',
     description: 'Exit the REPL',
     usage: '/quit',
+    category: 'system',
     handler: (_args, ctx) => ctx.quit?.(),
   });
   registerSlash({
     name: 'stop',
     description: 'Cancel the current turn',
     usage: '/stop',
+    category: 'session',
     handler: (_args, ctx) => ctx.cancelTurn?.(),
   });
   registerSlash({
     name: 'mode',
     description: 'Get/set permission mode (readonly|default|bypass)',
     usage: '/mode [readonly|default|bypass]',
+    category: 'system',
+    argHint: '[readonly|default|bypass]',
+    argChoices: ['readonly', 'default', 'bypass'],
     handler: (args, ctx) => {
       const v = args.trim();
       if (v === '') {
@@ -132,6 +147,7 @@ export function registerDefaultCommands(): void {
     name: 'new',
     description: 'Start a new session in current workspace',
     usage: '/new',
+    category: 'session',
     handler: async (_args, ctx) => {
       if (ctx.newSession) await ctx.newSession();
       else ctx.write('new session not supported');
@@ -141,6 +157,9 @@ export function registerDefaultCommands(): void {
     name: 'switch',
     description: 'Switch to another workspace',
     usage: '/switch <name>',
+    category: 'workspace',
+    argHint: '<name>',
+    argExamples: ['personal', 'work', 'research'],
     handler: async (args, ctx) => {
       if (!args) return ctx.write('usage: /switch <name>');
       if (ctx.switchWorkspace) await ctx.switchWorkspace(args);
@@ -150,6 +169,7 @@ export function registerDefaultCommands(): void {
     name: 'workspaces',
     description: 'List workspaces',
     usage: '/workspaces',
+    category: 'workspace',
     handler: async (_args, ctx) => {
       if (ctx.listWorkspaces) await ctx.listWorkspaces();
       else ctx.write('not supported');
@@ -159,6 +179,7 @@ export function registerDefaultCommands(): void {
     name: 'soul',
     description: 'Show SOUL.md',
     usage: '/soul',
+    category: 'workspace',
     handler: async (_args, ctx) => {
       if (ctx.showSoul) await ctx.showSoul();
     },
@@ -167,6 +188,7 @@ export function registerDefaultCommands(): void {
     name: 'memory',
     description: 'Show MEMORY.md',
     usage: '/memory',
+    category: 'workspace',
     handler: async (_args, ctx) => {
       if (ctx.showMemory) await ctx.showMemory();
     },
@@ -175,6 +197,10 @@ export function registerDefaultCommands(): void {
     name: 'provider',
     description: 'Get/set active provider',
     usage: '/provider [name]',
+    category: 'model',
+    argHint: '[name]',
+    argChoices: ['anthropic', 'openai-compat'],
+    argExamples: ['anthropic', 'openai-compat'],
     handler: async (args, ctx) => {
       if (ctx.setProvider) await ctx.setProvider(args);
     },
@@ -183,6 +209,9 @@ export function registerDefaultCommands(): void {
     name: 'model',
     description: 'Get/set active model (no arg → interactive picker)',
     usage: '/model [name]',
+    category: 'model',
+    argHint: '[name]',
+    argExamples: ['claude-sonnet-4-6', 'claude-opus-4-5', 'gpt-4o', 'gpt-4o-mini'],
     handler: async (args, ctx) => {
       if (args === '' && ctx.pickModel) {
         await ctx.pickModel();
@@ -195,6 +224,7 @@ export function registerDefaultCommands(): void {
     name: 'cost',
     description: 'Show cost usage',
     usage: '/cost',
+    category: 'session',
     handler: async (_args, ctx) => {
       if (ctx.showCost) await ctx.showCost();
       else ctx.write('cost tracking not available');
@@ -204,6 +234,9 @@ export function registerDefaultCommands(): void {
     name: 'thinking',
     description: 'Set reasoning effort for this session (on|off|minimal|low|medium|high)',
     usage: '/thinking [on|off|minimal|low|medium|high]',
+    category: 'model',
+    argHint: '[on|off|minimal|low|medium|high]',
+    argChoices: ['on', 'off', 'minimal', 'low', 'medium', 'high'],
     handler: async (args, ctx) => {
       const raw = args.trim();
       if (raw === '') {
@@ -232,6 +265,9 @@ export function registerDefaultCommands(): void {
     name: 'spec-confirm',
     description: 'Set spec-confirm mode (always|auto)',
     usage: '/spec-confirm <always|auto>',
+    category: 'system',
+    argHint: '<always|auto>',
+    argChoices: ['always', 'auto'],
     handler: async (args, ctx) => {
       const v = args.trim();
       if (v !== 'always' && v !== 'auto') {

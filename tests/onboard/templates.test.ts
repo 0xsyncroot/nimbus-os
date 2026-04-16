@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import matter from 'gray-matter';
-import { renderTemplates, __testing } from '../../src/onboard/templates.ts';
+import { renderTemplates, DEFAULT_SOUL_MD, __testing } from '../../src/onboard/templates.ts';
 import type { InitAnswers } from '../../src/onboard/questions.ts';
 
 const baseAnswers: InitAnswers = {
@@ -57,5 +57,61 @@ describe('SPEC-901: templates', () => {
 
   test('substitute throws on missing var', () => {
     expect(() => __testing.substitute('${missing}', {})).toThrow();
+  });
+});
+
+// SPEC-119: action-first bias — Values bullets use verbs, no gate patterns
+describe('SPEC-119: action-first Values in templates', () => {
+  /** Extract lines in the # Values section (up to next # heading). */
+  function extractValuesBullets(md: string): string[] {
+    const lines = md.split('\n');
+    let inValues = false;
+    const bullets: string[] = [];
+    for (const line of lines) {
+      if (/^#+ Values/.test(line)) { inValues = true; continue; }
+      if (inValues && /^#+/.test(line)) break;
+      if (inValues && line.trimStart().startsWith('-')) {
+        bullets.push(line.trim().slice(1).trim()); // strip leading "- "
+      }
+    }
+    return bullets;
+  }
+
+  test('DEFAULT_SOUL_MD Values bullets do not use pure gate openers (Preview|Confirm before|Respect)', () => {
+    const soul = DEFAULT_SOUL_MD('2026-04-16');
+    const bullets = extractValuesBullets(soul);
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      // Pure gate patterns: "Preview before", "Confirm before", "Respect X"
+      // "Confirm only before..." is the verb-first allowed form and is NOT matched by this regex.
+      expect(bullet).not.toMatch(/^(Preview\b|Confirm before|Respect\b)/i);
+    }
+  });
+
+  test('SOUL_TEMPLATE Values bullets do not use pure gate openers (Preview|Confirm before|Respect)', () => {
+    const files = renderTemplates(baseAnswers, '2026-04-16');
+    const soul = files['SOUL.md']!;
+    const bullets = extractValuesBullets(soul);
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet).not.toMatch(/^(Preview\b|Confirm before|Respect\b)/i);
+    }
+  });
+
+  test('DEFAULT_SOUL_MD Values bullets begin with verb from allowlist', () => {
+    const verbAllowlist = /^(Start|Pick|Investigate|Act|Concise|Show|State|Confirm only)/i;
+    const soul = DEFAULT_SOUL_MD('2026-04-16');
+    const bullets = extractValuesBullets(soul);
+    expect(bullets.length).toBeGreaterThan(0);
+    for (const bullet of bullets) {
+      expect(bullet).toMatch(verbAllowlist);
+    }
+  });
+
+  test('SOUL_TEMPLATE (rendered) Boundaries section remains intact', () => {
+    const files = renderTemplates(baseAnswers, '2026-04-16');
+    const soul = files['SOUL.md']!;
+    expect(soul).toContain('# Boundaries');
+    expect(soul).toContain('Will NOT');
   });
 });

@@ -1,11 +1,12 @@
 ---
 id: SPEC-110
 title: Runtime SDD — agent generates task spec before executing
-status: implemented
+status: superseded
+supersededBy: SPEC-132
 version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-15
-updated: 2026-04-15
+updated: 2026-04-16
 release: v0.1
 layer: core
 depends_on: [META-001, META-005, SPEC-103, SPEC-108, SPEC-401]
@@ -148,3 +149,4 @@ export declare function persistSpecAsync(spec: TaskSpec): void // background, no
 
 - 2026-04-15 @hiepht: initial draft. Runtime SDD as differentiator — "spec-before-plan makes agentic more effective".
 - 2026-04-15 @hiepht: **refactor per user clarification** — autonomous-first execution, no per-turn approval. Spec is internal planning aid; permission gate (SPEC-401) is user safety net. High-risk auto-flag triggers single confirm. Opt-in `/spec-confirm always` for power users.
+- 2026-04-16 superseded by SPEC-132 (plan-as-tool, TodoWriteTool). Out-of-band Haiku spec generation removed from loop; plan state now owned by model via tool_use. `taskSpec` parameter dropped from `buildSystemPrompt`; `[INTERNAL_PLAN]` block absent from all prompt outputs.

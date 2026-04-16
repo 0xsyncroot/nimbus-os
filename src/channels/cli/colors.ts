@@ -1,4 +1,4 @@
-// colors.ts — SPEC-801 T1: ANSI color helpers with NO_COLOR + TTY detection.
+// colors.ts — SPEC-801 T1 + SPEC-822 T7: ANSI color helpers with NO_COLOR + TTY detection.
 
 const ESC = '\x1b[';
 
@@ -42,3 +42,18 @@ export function stripAnsi(s: string): string {
 export function colorEnabled(): boolean {
   return isColorEnabled();
 }
+
+// ---------------------------------------------------------------------------
+// SPEC-822 T7 — Slash UI polish constants (reusable across slash + markdown)
+// ---------------------------------------------------------------------------
+
+/** Accent color — blue-ish (xterm-256: 39) */
+export const ACCENT = '\x1b[38;5;39m';
+/** Dim (faint text) */
+export const DIM = '\x1b[2m';
+/** Ghost text (italicised dim — used for inline hints, deferred v0.3.1) */
+export const GHOST = '\x1b[2;3m';
+/** Horizontal rule character */
+export const RULE_CHAR = '─';
+/** Reset all attributes */
+export const RESET = '\x1b[0m';

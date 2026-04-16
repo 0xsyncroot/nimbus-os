@@ -100,7 +100,7 @@ describe('Task #34: event bus wiring in runTurn', () => {
       bus.subscribe(t, (e) => { events.push({ topic: t, e }); }),
     );
 
-    for await (const _out of runTurn({ ctx, userMessage: 'hi', generateSpec: false })) {
+    for await (const _out of runTurn({ ctx, userMessage: 'hi' })) {
       // drain
     }
 
@@ -168,7 +168,7 @@ describe('Task #34: event bus wiring in runTurn', () => {
       bus.subscribe(t, (e) => { events.push({ topic: t, e }); }),
     );
 
-    for await (const _out of runTurn({ ctx, userMessage: 'use tool', tools, generateSpec: false })) {
+    for await (const _out of runTurn({ ctx, userMessage: 'use tool', tools })) {
       // drain
     }
     await new Promise((r) => setTimeout(r, 10));

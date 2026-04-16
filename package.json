@@ -1,6 +1,6 @@
 {
   "name": "nimbus-os",
-  "version": "0.2.8-alpha",
+  "version": "0.3.0-alpha",
   "description": "Personal AI OS — autonomous, soul-driven agent with cross-session memory",
   "type": "module",
   "license": "SEE LICENSE IN LICENSE",

@@ -1,7 +1,7 @@
 ---
 id: SPEC-132
 title: Plan-as-Tool — TodoWriteTool for active plan management
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-16
