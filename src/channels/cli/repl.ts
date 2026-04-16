@@ -17,10 +17,13 @@ import { colors, prefixes } from './colors.ts';
 import { createRenderer } from './render.ts';
 import {
   dispatchSlash,
+  listCommands,
   parseSlash,
   registerDefaultCommands,
   __resetRegistry,
 } from './slashCommands.ts';
+import { createAutocomplete, type AutocompleteInput } from './slashAutocomplete.ts';
+import { handleModelPicker } from './modelPicker.ts';
 import { wireBusSubscribers } from './subscriptions.ts';
 
 export interface ReplOptions {
@@ -84,8 +87,12 @@ async function lazyProvider(state: ReplState): Promise<Provider> {
       wsId: state.wsId,
     });
     apiKey = resolved.apiKey;
-  } catch {
-    // leave apiKey undefined so createProviderFromConfig can surface its own error
+  } catch (err) {
+    if (err instanceof NimbusError && err.code === ErrorCode.T_NOT_FOUND) {
+      // expected — key just not stored yet; leave apiKey undefined
+    } else {
+      throw err; // propagate U_MISSING_CONFIG, X_CRED_ACCESS so user sees real error
+    }
   }
 
   const cfg: Parameters<typeof createProviderFromConfig>[0] = {
@@ -124,6 +131,18 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   const write = (s: string): void => {
     output.write(s);
   };
+
+  // Fix 1a — auto-provision vault passphrase on REPL boot so vault decrypt works
+  // without requiring the user to re-run init. No-op if already provisioned or no
+  // workspace yet (runAutoInit will call it on its own path).
+  {
+    const { autoProvisionPassphrase } = await import('../../platform/secrets/fileFallback.ts');
+    try {
+      await autoProvisionPassphrase();
+    } catch {
+      // no-op: workspace may not exist yet (runAutoInit path will call it)
+    }
+  }
 
   let wsId = opts.workspaceId;
   if (!wsId) {
@@ -184,7 +203,7 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 
   const rl = createInterface({ input, output, terminal: true });
 
-  const ctx = makeReplContext(state, rl, write);
+  const ctx = makeReplContext(state, rl, write, input, output);
 
   rl.on('SIGINT', () => {
     handleSigint(state, rl, write);
@@ -196,8 +215,32 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 
   const renderer = createRenderer(write);
 
+  // TTY check: use autocomplete dropdown when running interactively.
+  const ttyInput = input as AutocompleteInput;
+  const isTTY = ttyInput.isTTY === true && typeof ttyInput.setRawMode === 'function' &&
+    process.env['TERM'] !== 'dumb';
+
+  const ac = isTTY
+    ? createAutocomplete({
+        input: ttyInput,
+        output,
+        promptStr: () => promptStr(state),
+        commands: listCommands,
+        cols: () => (process.stdout.columns ?? 80),
+      })
+    : null;
+
+  // SIGWINCH: refresh cols for autocomplete (no-op for non-TTY)
+  const onSigwinch = (): void => { /* cols() re-reads process.stdout.columns live */ };
+  if (isTTY) process.on('SIGWINCH', onSigwinch);
+
   while (state.running) {
-    const line = await readLine(rl, promptStr(state));
+    let line: string | null;
+    if (ac) {
+      line = await ac.readLine();
+    } else {
+      line = await readLine(rl, promptStr(state));
+    }
     if (line === null) break;
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
@@ -211,6 +254,8 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
     await runSingleTurn(state, trimmed, renderer, write);
   }
 
+  if (isTTY) process.off('SIGWINCH', onSigwinch);
+  ac?.dispose();
   unwireBus();
   rl.close();
 }
@@ -258,6 +303,8 @@ function makeReplContext(
   state: ReplState,
   rl: ReadlineInterface,
   write: (s: string) => void,
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
 ): import('./slashCommands.ts').ReplContext {
   return {
     wsId: state.wsId,
@@ -347,6 +394,30 @@ function makeReplContext(
       state.model = m;
       state.provider = null;
       write(`${colors.ok(prefixes.ok)} model now ${m} (session-only)\n`);
+    },
+    pickModel: async () => {
+      const { meta } = await loadWorkspace(state.wsId);
+      const providerId = state.providerKind === 'anthropic' ? 'anthropic' : state.endpoint ?? 'openai';
+      let apiKey: string | undefined;
+      try {
+        const { resolveProviderKey } = await import('../../providers/registry.ts');
+        const resolved = await resolveProviderKey({ providerId, wsId: state.wsId });
+        apiKey = resolved.apiKey;
+      } catch {
+        apiKey = undefined;
+      }
+      const pickerInput = input as NodeJS.ReadableStream & { setRawMode?: (raw: boolean) => unknown; isTTY?: boolean };
+      const selected = await handleModelPicker({
+        workspace: meta,
+        apiKey,
+        output,
+        input: pickerInput,
+      });
+      if (selected) {
+        state.model = selected;
+        state.provider = null;
+        write(`${colors.ok(prefixes.ok)} model set to ${selected} (saved to workspace)\n`);
+      }
     },
     showCost: async () => {
       write(`${colors.dim('cost tracking arrives in v0.2')}\n`);

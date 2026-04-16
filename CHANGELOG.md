@@ -2,6 +2,28 @@
 
 All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2-alpha] — 2026-04-16
+
+### Fixed
+
+- **P_AUTH blocker** — `startRepl` now calls `autoProvisionPassphrase()` on boot so vault decrypt works
+  in a fresh process after `nimbus init`. The missing passphrase was silently swallowed, causing
+  `openaiCompat` to fall back to the `'sk-unused'` sentinel and OpenAI to return 401.
+- **Remove `'sk-unused'` sentinel** — `createOpenAICompatProvider` now throws `U_MISSING_CONFIG` with
+  an actionable hint when no API key is available, instead of silently sending an invalid key.
+  Ollama (local, keyless) is exempted via `endpoint !== 'ollama'` guard.
+- **Narrow catch blocks in repl.ts** — `lazyProvider` no longer swallows `U_MISSING_CONFIG` and
+  `X_CRED_ACCESS` errors from `resolveProviderKey`; only `T_NOT_FOUND` (key not stored yet) is
+  silently suppressed. Real errors now surface to the user as readable messages.
+
+### UX
+
+- **`nimbus init` flows into REPL** — after completing init, the session starts automatically.
+  Use `--no-chat` (or `--no-prompt`) to skip REPL entry for CI/scripted installs.
+- **Slash command autocomplete dropdown** — type `/` in the REPL to see a live-filtered dropdown
+  with ↑↓ navigation, Tab to complete, Esc to dismiss. Non-TTY terminals fall back gracefully.
+  (Implementation was already present in v0.2.1; wiring is now confirmed correct.)
+
 ## [0.1.0-alpha] — 2026-04-15
 
 First alpha release of nimbus-os — AI OS cá nhân đa năng với Runtime SDD differentiator.

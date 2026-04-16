@@ -489,7 +489,15 @@ export function createOpenAICompatProvider(
     config = ENDPOINTS[opts.endpoint];
   }
 
-  const apiKey = opts.apiKey ?? process.env[config.apiKeyEnv] ?? 'sk-unused';
+  const resolvedKey = opts.apiKey ?? process.env[config.apiKeyEnv];
+  if (!resolvedKey && opts.endpoint !== 'ollama') {
+    throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
+      reason: 'provider_key_missing',
+      provider: config.id,
+      hint: 'run `nimbus key set <provider>` or set the provider env var',
+    });
+  }
+  const apiKey = resolvedKey ?? 'ollama-no-auth';
   const client = new OpenAI({ apiKey, baseURL: config.baseUrl });
 
   return {

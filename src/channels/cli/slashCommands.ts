@@ -22,6 +22,7 @@ export interface ReplContext {
   showIdentity?: () => Promise<void>;
   setProvider?: (provider: string) => Promise<void>;
   setModel?: (model: string) => Promise<void>;
+  pickModel?: () => Promise<void>;
   showCost?: () => Promise<void>;
   setSpecConfirm?: (mode: 'always' | 'auto') => void;
   /** SPEC-206 T3 — session-scoped reasoning effort override. */
@@ -180,10 +181,14 @@ export function registerDefaultCommands(): void {
   });
   registerSlash({
     name: 'model',
-    description: 'Get/set active model',
+    description: 'Get/set active model (no arg → interactive picker)',
     usage: '/model [name]',
     handler: async (args, ctx) => {
-      if (ctx.setModel) await ctx.setModel(args);
+      if (args === '' && ctx.pickModel) {
+        await ctx.pickModel();
+      } else if (ctx.setModel) {
+        await ctx.setModel(args);
+      }
     },
   });
   registerSlash({

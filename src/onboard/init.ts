@@ -308,7 +308,6 @@ export async function runInit(opts: InitRunOpts = {}): Promise<void> {
   }
 
   write(`\n${'  '}workspace "${answers.workspaceName}" created at ${paths.root}\n`);
-  write(`${'  '}now run \`nimbus\` to start chatting.\n\n`);
 
   logger.info({ wsId: meta.id, name: answers.workspaceName }, 'init_wizard_completed');
 }

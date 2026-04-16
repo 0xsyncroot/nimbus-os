@@ -12,6 +12,7 @@ const cmd = args[0];
 interface ParsedFlags {
   force: boolean;
   noPrompt: boolean;
+  noChat: boolean;
   advanced: boolean;
   name?: string;
   location?: string;
@@ -27,6 +28,7 @@ function parseFlags(rest: string[]): ParsedFlags {
   const flags: ParsedFlags = {
     force: false,
     noPrompt: false,
+    noChat: false,
     advanced: false,
     skipPermissions: false,
     skipKey: false,
@@ -36,6 +38,7 @@ function parseFlags(rest: string[]): ParsedFlags {
     const a = rest[i]!;
     if (a === '--force') flags.force = true;
     else if (a === '--no-prompt') flags.noPrompt = true;
+    else if (a === '--no-chat') flags.noChat = true;
     else if (a === '--advanced') flags.advanced = true;
     else if (a === '--verbose' || a === '-V') flags.verbose = true;
     else if (a === '--dangerously-skip-permissions') flags.skipPermissions = true;
@@ -144,6 +147,10 @@ async function main(): Promise<number> {
         opts.answers = answers as NonNullable<Parameters<typeof runInit>[0]>['answers'];
       }
       await runInit(opts);
+      if (flags.noChat || flags.noPrompt) return 0; // CI / scripted path — skip auto-REPL
+      // Auto-continue into interactive REPL so the user doesn't have to re-run `nimbus`.
+      const { startRepl } = await import('./channels/cli/repl.ts');
+      await startRepl({ skipPermissions: flags.skipPermissions });
       return 0;
     }
     case 'cost':
@@ -180,8 +187,8 @@ Usage: nimbus [command] [args]
 Commands (v0.1 MVP):
   (default)  Enter interactive AI OS session in active workspace
              Flags: --dangerously-skip-permissions (requires NIMBUS_BYPASS_CONFIRMED=1)
-  init       Onboarding wizard — create first workspace + SOUL.md
-             Flags: --name <name>  --location <dir>  --force  --no-prompt
+  init       Onboarding wizard — create first workspace + SOUL.md, then enters REPL
+             Flags: --name <name>  --location <dir>  --force  --no-prompt  --no-chat
   key        Manage provider API keys (set/list/delete/test)
              Flags: --key-stdin  --key-from-env <VAR>  --base-url <url>  --test  --skip-test  --yes
   cost       View token + USD usage (v0.2)
