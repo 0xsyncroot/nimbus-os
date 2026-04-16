@@ -1,11 +1,38 @@
 {
   "name": "nimbus-os",
-  "version": "0.1.0-dev",
-  "private": true,
-  "description": "AI OS cá nhân tự chủ, an toàn, có linh hồn",
+  "version": "0.2.0-alpha",
+  "description": "Personal AI OS — autonomous, soul-driven agent with cross-session memory",
   "type": "module",
+  "license": "SEE LICENSE IN LICENSE",
+  "author": {
+    "name": "Hiep Hoang Trung",
+    "email": "work.hiepht@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xsyncroot/nimbus-os.git"
+  },
+  "homepage": "https://github.com/0xsyncroot/nimbus-os",
+  "keywords": ["ai", "agent", "llm", "personal-assistant", "bun", "typescript", "anthropic", "openai", "mcp", "cli"],
   "bin": {
     "nimbus": "./src/cli.ts"
+  },
+  "files": [
+    "src/**/*.ts",
+    "src/**/*.json",
+    "specs/**/*.md",
+    "docs/**/*.md",
+    "examples/**/*.md",
+    "scripts/**/*.ts",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "tsconfig.json",
+    "bunfig.toml"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "start": "bun run src/cli.ts",
