@@ -42,34 +42,48 @@ function hostname(rawUrl: string): string {
   }
 }
 
+// v0.3.4 (Bug A fix): labels now include the progressive verb ("đang "/""),
+// so render.ts no longer hardcodes a VN prefix in front of an EN label.
+// VN verb prefix is inline; EN progressive is already "-ing" so no prefix needed.
+// The fallback for unknown tools mirrors the same convention.
+// Extra aliases (MultiEdit, NotebookEdit, Ls) match tool names the registry
+// actually emits, so the EN stray path ("đang writing") can't recur via an
+// unknown-tool fallback.
+
 const LABELS_VN: Record<string, (args: Record<string, unknown>) => string> = {
-  Write:      (a) => `ghi file ${trunc(str(a, 'path', 'file_path'))}`,
-  Edit:       (a) => `sửa ${trunc(str(a, 'path', 'file_path'))}`,
-  Read:       (a) => `đọc ${trunc(str(a, 'path', 'file_path'))}`,
-  Grep:       (a) => `tìm "${trunc(str(a, 'pattern'))}"`,
-  Glob:       (a) => `liệt kê ${trunc(str(a, 'pattern'))}`,
-  Bash:       (a) => `chạy: ${trunc(str(a, 'command'))}`,
-  WebSearch:  (a) => `tìm web: ${trunc(str(a, 'query'))}`,
-  WebFetch:   (a) => `tải ${hostname(str(a, 'url'))}`,
-  TodoWrite:  (a) => `cập nhật plan (${arrLen(a, 'todos')} mục)`,
-  MemoryTool: (_) => 'ghi chú vào memory',
-  AgentTool:  (_) => 'giao việc cho sub-agent',
-  Skill:      (a) => `dùng skill: ${trunc(str(a, 'skill', 'name'))}`,
+  Write:        (a) => `đang ghi file ${trunc(str(a, 'path', 'file_path'))}`,
+  Edit:         (a) => `đang sửa ${trunc(str(a, 'path', 'file_path'))}`,
+  MultiEdit:    (a) => `đang sửa nhiều chỗ trong ${trunc(str(a, 'path', 'file_path'))}`,
+  Read:         (a) => `đang đọc ${trunc(str(a, 'path', 'file_path'))}`,
+  Grep:         (a) => `đang tìm "${trunc(str(a, 'pattern'))}"`,
+  Glob:         (a) => `đang liệt kê ${trunc(str(a, 'pattern'))}`,
+  Ls:           (a) => `đang liệt kê ${trunc(str(a, 'path'))}`,
+  Bash:         (a) => `đang chạy: ${trunc(str(a, 'command', 'cmd'))}`,
+  WebSearch:    (a) => `đang tìm web: ${trunc(str(a, 'query'))}`,
+  WebFetch:     (a) => `đang tải ${hostname(str(a, 'url'))}`,
+  TodoWrite:    (a) => `đang cập nhật plan (${arrLen(a, 'todos')} mục)`,
+  NotebookEdit: (a) => `đang sửa notebook ${trunc(str(a, 'path', 'file_path'))}`,
+  MemoryTool:   (_) => 'đang ghi chú vào memory',
+  AgentTool:    (_) => 'đang giao việc cho sub-agent',
+  Skill:        (a) => `đang dùng skill: ${trunc(str(a, 'skill', 'name'))}`,
 };
 
 const LABELS_EN: Record<string, (args: Record<string, unknown>) => string> = {
-  Write:      (a) => `writing ${trunc(str(a, 'path', 'file_path'))}`,
-  Edit:       (a) => `editing ${trunc(str(a, 'path', 'file_path'))}`,
-  Read:       (a) => `reading ${trunc(str(a, 'path', 'file_path'))}`,
-  Grep:       (a) => `searching for "${trunc(str(a, 'pattern'))}"`,
-  Glob:       (a) => `listing ${trunc(str(a, 'pattern'))}`,
-  Bash:       (a) => `running: ${trunc(str(a, 'command'))}`,
-  WebSearch:  (a) => `searching web: ${trunc(str(a, 'query'))}`,
-  WebFetch:   (a) => `fetching ${hostname(str(a, 'url'))}`,
-  TodoWrite:  (a) => `updating plan (${arrLen(a, 'todos')} items)`,
-  MemoryTool: (_) => 'updating memory',
-  AgentTool:  (_) => 'delegating to sub-agent',
-  Skill:      (a) => `running skill: ${trunc(str(a, 'skill', 'name'))}`,
+  Write:        (a) => `writing ${trunc(str(a, 'path', 'file_path'))}`,
+  Edit:         (a) => `editing ${trunc(str(a, 'path', 'file_path'))}`,
+  MultiEdit:    (a) => `editing ${trunc(str(a, 'path', 'file_path'))}`,
+  Read:         (a) => `reading ${trunc(str(a, 'path', 'file_path'))}`,
+  Grep:         (a) => `searching for "${trunc(str(a, 'pattern'))}"`,
+  Glob:         (a) => `listing ${trunc(str(a, 'pattern'))}`,
+  Ls:           (a) => `listing ${trunc(str(a, 'path'))}`,
+  Bash:         (a) => `running: ${trunc(str(a, 'command', 'cmd'))}`,
+  WebSearch:    (a) => `searching web: ${trunc(str(a, 'query'))}`,
+  WebFetch:     (a) => `fetching ${hostname(str(a, 'url'))}`,
+  TodoWrite:    (a) => `updating plan (${arrLen(a, 'todos')} items)`,
+  NotebookEdit: (a) => `editing notebook ${trunc(str(a, 'path', 'file_path'))}`,
+  MemoryTool:   (_) => 'updating memory',
+  AgentTool:    (_) => 'delegating to sub-agent',
+  Skill:        (a) => `running skill: ${trunc(str(a, 'skill', 'name'))}`,
 };
 
 /**
@@ -84,7 +98,10 @@ export function formatToolLabel(
   const map = locale === 'vi' ? LABELS_VN : LABELS_EN;
   const fn = map[toolName];
   if (fn) return fn(args);
-  return locale === 'vi' ? `dùng công cụ: ${toolName}` : `using tool: ${toolName}`;
+  // v0.3.4: Fallback for unknown / MCP / plugin-provided tools must also be
+  // fully-localized (VN includes the "đang" verb) so it composes with the
+  // renderer's static prefix without producing a half-translated line.
+  return locale === 'vi' ? `đang dùng công cụ: ${toolName}` : `using tool: ${toolName}`;
 }
 
 /** Alias: humanizeToolInvocation — matches spec interface name */

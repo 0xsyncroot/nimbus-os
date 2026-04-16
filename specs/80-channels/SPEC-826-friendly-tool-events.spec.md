@@ -2,21 +2,25 @@
 id: SPEC-826
 title: Friendly tool-event rendering for user-facing CLI
 status: draft
-version: 0.1.0
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
-release: v0.3.2
+release: v0.3.4
 layer: channels
 depends_on: [SPEC-103, SPEC-801, SPEC-825]
 blocks: []
-estimated_loc: 180
+estimated_loc: 210
 files_touched:
   - src/channels/cli/toolLabels.ts
   - src/channels/cli/errorFormatCli.ts
   - src/channels/cli/render.ts
+  - src/core/toolLabels.ts
   - src/core/turn.ts
+  - src/core/loop.ts
+  - tests/channels/cli/render.test.ts
   - tests/channels/cli/toolLabels.test.ts
+  - tests/core/toolLabels.test.ts
 ---
 
 # Friendly tool-event rendering for user-facing CLI
@@ -191,3 +195,14 @@ export type LoopOutput =
 
 ## 12. Changelog
 - 2026-04-16 @hiepht: draft (bundled with SPEC-824 + SPEC-825 cho v0.3.2 UX polish).
+- 2026-04-16 @hiepht: v0.3.4 **Bug A fix** — label map now includes the progressive
+  verb inline (VN `đang …`, EN gerund). Removed the hardcoded `đang ` prefix in
+  `render.ts` so LANG=C.UTF-8 servers (which default `detectLocale()` to `en`)
+  no longer emit the hybrid `đang writing {path}` leak. Added aliases for
+  `MultiEdit` / `NotebookEdit` / `Ls` and Bash `cmd` key so registry-emitted
+  names never hit the unknown-tool fallback. `loop.ts` now passes `args` on
+  every `tool_start` event so the renderer can humanize even when `humanLabel`
+  is absent. Error renderer: extract `errorCode` from `ToolResult.content`
+  (format `T_xxx: {...ctx}`) into `tool_end` so the friendly formatter can
+  pick the per-code sentence instead of the generic "Tool failed —
+  run with `--verbose`" dev-hint that leaked to non-dev users.

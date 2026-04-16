@@ -2,15 +2,15 @@
 id: SPEC-124
 title: Credential paste in owned channel → vault save + act
 status: draft
-version: 0.1.0
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
-release: v0.3.1
+release: v0.3.4
 layer: core
 depends_on: [SPEC-105, SPEC-123, SPEC-152, SPEC-601, SPEC-803]
 blocks: []
-estimated_loc: 140
+estimated_loc: 170
 files_touched:
   - src/core/promptSections.ts
   - src/core/credentialDetector.ts
@@ -177,3 +177,13 @@ type CredentialDetectedEvent = {
 
 - 2026-04-16 @hiepht: renumbered SPEC-120→SPEC-124 (collision with v0.2 context-compaction implemented spec)
 - 2026-04-16 @hiepht: draft — post-v0.3 Telegram paste regression; SPEC-123 action-first bias fix did not cover the credential branch. User-caught live: token pasted in REPL with Vietnamese intent "kết nối với a qua đây đi" → agent emitted security-theater refusal instead of vault-save + connect.
+- 2026-04-16 @hiepht: v0.3.4 **Bug C fix** — user-caught live: after a Write
+  tool returned error, agent claimed `"em đã nhận token"` when in fact the
+  save had failed. This is a hallucination on tool failure — security
+  critical because the user trusts the "saved" affirmation and assumes the
+  credential is protected when it is not. Strengthened `CREDENTIAL_HANDLING_SECTION`
+  with a new "TRUTHFULNESS ON TOOL FAILURE" clause: any `isError: true`
+  tool_result means the credential is NOT saved; agent MUST state the
+  failure plainly, MUST NOT say "đã nhận / saved / got it" on error, and
+  MUST NOT suggest the user paste the token manually into their config
+  file as a workaround. Regression tests pin the anchor phrases.

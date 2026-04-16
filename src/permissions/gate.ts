@@ -224,6 +224,16 @@ function decideByMode(
     return ruleDecision;
   }
 
+  // v0.3.4 (Bug B fix): consult the session allow cache BEFORE the
+  // destructive/unknown-tool fallback returns 'ask'. Without this, the
+  // adapter's onAsk→rememberAllow→re-run flow would still see 'ask' on the
+  // second canUseTool call, leaving the user stuck in a permission loop that
+  // surfaces as a generic "Tool failed" error.
+  if (DESTRUCTIVE_TOOLS.has(inv.name) || !READONLY_ALLOWED_TOOLS.has(inv.name)) {
+    const key = askCacheKey(inv);
+    if (key && cache.allows.has(key)) return 'allow';
+  }
+
   // No rule matched. Safe tools auto-allow, destructive tools ask.
   if (READONLY_ALLOWED_TOOLS.has(inv.name)) return 'allow';
   if (DESTRUCTIVE_TOOLS.has(inv.name)) return 'ask';

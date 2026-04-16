@@ -121,9 +121,13 @@ export function createRenderer(
         if (verbose) {
           output.write(`${colors.info(prefixes.tool)} \u2192 ${loopOutput.name} (${loopOutput.toolUseId})\n`);
         } else {
+          // v0.3.4 (Bug A fix): the locale-specific label now carries its
+          // own progressive verb ("đang …" in VN, "-ing" gerund in EN), so
+          // this prefix is locale-agnostic — no more "đang writing" leak when
+          // LANG=C.UTF-8 on servers defaults detectLocale() to 'en'.
           const label = loopOutput.humanLabel ?? humanizeToolInvocation(loopOutput.name, loopOutput.args ?? {}, locale);
           // ⋯ (U+22EF) + dim style
-          output.write(`  ${EARTH_DIM()}\u22EF ${RESET}đang ${label}\n`);
+          output.write(`  ${EARTH_DIM()}\u22EF ${RESET}${label}\n`);
         }
         break;
       }

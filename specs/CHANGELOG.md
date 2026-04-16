@@ -2,6 +2,29 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-16 — v0.3.4-alpha URGENT: 3 user-caught regressions
+
+- @hiepht: **Bug A (SPEC-826 v0.2)** — `⋯ đang writing {path}` VN/EN hybrid
+  leak on servers with `LANG=C.UTF-8` (locale defaults to `en` but renderer
+  hardcoded the VN `đang ` prefix). Fix: label map owns its verb; renderer is
+  locale-agnostic. Also added missing tool aliases (MultiEdit, NotebookEdit,
+  Ls, Bash `cmd` key) to prevent unknown-tool fallback path.
+- @hiepht: **Bug B (SPEC-825 v0.2)** — confirm `y` then generic
+  "Tool failed — run with `--verbose`". Two defects: (1) `gate.ts` only
+  checked `rememberAllow` cache inside the `ruleDecision === 'ask'` branch,
+  never the destructive-tool fallback; (2) `loopAdapter` only populated cache
+  on `'always'`, not `'allow'`. Fixed both; `'allow'`/`'always'` are
+  session-equivalent in v0.3 (v0.4 splits them via persistence).
+  Bonus: renderer now extracts `errorCode` from `ToolResult.content` so the
+  friendly formatter picks a per-code sentence instead of the generic
+  fallback. Removed `--verbose` dev-hint from the default user-facing
+  message.
+- @hiepht: **Bug C (SPEC-124 v0.2)** — agent claimed `"em đã nhận token"`
+  after Write tool returned error (hallucination on tool failure). Fix:
+  `CREDENTIAL_HANDLING_SECTION` now carries a "TRUTHFULNESS ON TOOL FAILURE"
+  hard-rule clause: `isError: true` ⟹ credential NOT saved ⟹ agent must
+  state failure plainly; no "đã nhận / saved"; no user-paste-workaround.
+
 ## 2026-04-15 — Project Bootstrap
 
 - @hiepht: Adopted **Spec-Driven Development** (spec-first + spec-anchored). Reason: 1-dev + AI-assisted workflow requires durable truth.

@@ -46,6 +46,23 @@ function publishSafe(bus: EventBus, topic: string, event: unknown): void {
   }
 }
 
+/**
+ * v0.3.4 (Bug B fix): peek the structured ErrorCode prefix out of a failed
+ * ToolResult so the renderer can pick a locale-specific friendly sentence
+ * instead of the generic "Tool failed — run with --verbose" fallback.
+ *
+ * Matches executor.ts errorBlock() format: `${ErrorCode}: ${JSON context}`.
+ * Returns undefined on success or when the content doesn't follow the format
+ * (e.g. handler wrote a raw string).
+ */
+function extractErrorCode(res: ToolResult): string | undefined {
+  if (res.ok) return undefined;
+  const text = typeof res.content === 'string' ? res.content : '';
+  if (text.length === 0) return undefined;
+  const m = text.match(/^([A-Z]_[A-Z0-9_]+)(?::|$)/);
+  return m ? m[1] : undefined;
+}
+
 export interface ToolInvocation {
   toolUseId: string;
   name: string;
@@ -409,7 +426,14 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
       // Concurrent read-only
       if (pure.length > 0) {
         for (const inv of pure) {
-          yield { kind: 'tool_start', toolUseId: inv.toolUseId, name: inv.name };
+          // v0.3.4 (Bug A fix): propagate `args` so the renderer can humanize
+          // the invocation even if no pre-computed humanLabel is supplied.
+          yield {
+            kind: 'tool_start',
+            toolUseId: inv.toolUseId,
+            name: inv.name,
+            args: (inv.input ?? {}) as Record<string, unknown>,
+          };
           emitInvocation(inv);
         }
         const started = Date.now();
@@ -426,21 +450,43 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
           const inv = pure[i]!;
           results.push(res);
           const ms = Date.now() - started;
-          yield { kind: 'tool_end', toolUseId: res.toolUseId, ok: res.ok, ms };
+          const endEvt = {
+            kind: 'tool_end' as const,
+            toolUseId: res.toolUseId,
+            ok: res.ok,
+            ms,
+          };
+          // v0.3.4 (Bug B fix): surface the structured error code so the
+          // renderer can emit a locale-specific friendly sentence instead of
+          // the generic "Tool failed — run with --verbose" fallback.
+          const code = extractErrorCode(res);
+          yield code ? { ...endEvt, errorCode: code } : endEvt;
           emitResult(inv, res.ok, ms);
         }
       }
 
       // Serial write/exec
       for (const inv of serial) {
-        yield { kind: 'tool_start', toolUseId: inv.toolUseId, name: inv.name };
+        yield {
+          kind: 'tool_start',
+          toolUseId: inv.toolUseId,
+          name: inv.name,
+          args: (inv.input ?? {}) as Record<string, unknown>,
+        };
         emitInvocation(inv);
         const started = Date.now();
         try {
           const res = await opts.tools.execute(inv, ctx.abort.tool.signal);
           results.push(res);
           const ms = Date.now() - started;
-          yield { kind: 'tool_end', toolUseId: res.toolUseId, ok: res.ok, ms };
+          const endEvt = {
+            kind: 'tool_end' as const,
+            toolUseId: res.toolUseId,
+            ok: res.ok,
+            ms,
+          };
+          const code = extractErrorCode(res);
+          yield code ? { ...endEvt, errorCode: code } : endEvt;
           emitResult(inv, res.ok, ms);
         } catch (err) {
           results.push({
@@ -450,7 +496,14 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
             sideEffects: opts.tools.effectOf(inv.name),
           });
           const ms = Date.now() - started;
-          yield { kind: 'tool_end', toolUseId: inv.toolUseId, ok: false, ms };
+          const code = err instanceof NimbusError ? err.code : undefined;
+          yield {
+            kind: 'tool_end',
+            toolUseId: inv.toolUseId,
+            ok: false,
+            ms,
+            ...(code !== undefined ? { errorCode: code } : {}),
+          };
           emitResult(inv, false, ms);
         }
       }

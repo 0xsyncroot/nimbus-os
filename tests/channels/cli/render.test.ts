@@ -203,8 +203,9 @@ describe('SPEC-826: render — friendly tool event labels', () => {
     delete process.env['LANG'];
   });
 
-  // Snapshot 1: running state — VN
-  test('tool_start emits ⋯ đang {label} (vi)', () => {
+  // Snapshot 1: running state — VN (v0.3.4: "đang" is part of the label, not a
+  // hardcoded prefix baked into the renderer)
+  test('tool_start emits ⋯ đang ghi file {path} (vi)', () => {
     const out = makeStream();
     const renderer = createRenderer(out, { locale: 'vi' });
     renderer.handle({
@@ -221,7 +222,8 @@ describe('SPEC-826: render — friendly tool event labels', () => {
   });
 
   // Snapshot 2: running state — EN
-  test('tool_start emits ⋯ đang {label} (en)', () => {
+  // v0.3.4 Bug A regression: EN path MUST NOT contain "đang".
+  test('tool_start emits ⋯ writing {path} (en) — no "đang" leak', () => {
     const out = makeStream();
     const renderer = createRenderer(out, { locale: 'en' });
     renderer.handle({
@@ -230,9 +232,36 @@ describe('SPEC-826: render — friendly tool event labels', () => {
       name: 'Write',
       args: { path: 'bot.py' },
     });
-    expect(out.captured).toContain('đang writing bot.py');
+    expect(out.captured).toContain('writing bot.py');
+    expect(out.captured).not.toContain('đang');
     expect(out.captured).toContain('\u22EF');
     expect(out.captured).not.toContain('call_abc123');
+  });
+
+  // Bug A v0.3.4: user hit this exact symptom on LANG=C.UTF-8 server with Write tool
+  test('tool_start EN path does NOT produce "đang writing" hybrid (Bug A repro)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'en' });
+    renderer.handle({
+      kind: 'tool_start',
+      toolUseId: 'call_xyz',
+      name: 'Write',
+      args: { path: 'telegram.botToken' },
+    });
+    expect(out.captured).not.toContain('đang writing');
+  });
+
+  // Bug A — humanLabel missing + args missing → must still compose correctly
+  test('tool_start without args still humanizes path-less tools (vi)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'vi' });
+    renderer.handle({
+      kind: 'tool_start',
+      toolUseId: 'call_abc',
+      name: 'MemoryTool',
+    });
+    expect(out.captured).toContain('đang ghi chú vào memory');
+    expect(out.captured).not.toContain('đang đang');
   });
 
   // Snapshot 3: ok state — VN (humanLabel provided by loop)

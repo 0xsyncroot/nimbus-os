@@ -91,6 +91,36 @@ describe('SPEC-401: gate — default mode', () => {
     gate.rememberAllow('S1', 'Bash:rm:foo');
     expect(await gate.canUseTool(inv('Bash', { cmd: 'rm:foo' }), ctx('default'))).toBe('allow');
   });
+
+  // v0.3.4 (Bug B fix): rememberAllow MUST also convert the destructive-tool
+  // fallback ask → allow (no matching rule). Prior to the fix, the cache
+  // was only consulted when a rule matched with decision 'ask' — leaving
+  // rememberAllow ineffective for the common Write/Edit flow. User-caught
+  // live bug: `y` confirm → tool re-run → still "ask" → "Tool failed"
+  // generic error.
+  test('Bug B regression: rememberAllow converts destructive fallback ask → allow (Write, no rules)', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const invocation: ToolInvocation = { name: 'Write', input: { path: '/tmp/project/bot.py' } };
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('ask');
+    gate.rememberAllow('S1', 'Write:/tmp/project/bot.py');
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('allow');
+  });
+
+  test('Bug B regression: rememberAllow converts destructive fallback ask → allow (Bash, no rules)', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const invocation: ToolInvocation = { name: 'Bash', input: { cmd: 'mkdir foo' } };
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('ask');
+    gate.rememberAllow('S1', 'Bash:mkdir foo');
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('allow');
+  });
+
+  test('Bug B regression: rememberAllow converts unknown-tool ask → allow (MCP tool)', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const invocation: ToolInvocation = { name: 'SomeMcpTool', input: { path: '/tmp/x' } };
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('ask');
+    gate.rememberAllow('S1', 'SomeMcpTool:/tmp/x');
+    expect(await gate.canUseTool(invocation, ctx('default'))).toBe('allow');
+  });
 });
 
 describe('SPEC-401: gate — bypass mode', () => {

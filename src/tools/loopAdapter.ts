@@ -114,7 +114,12 @@ export function createLoopAdapter(opts: LoopAdapterOptions): LoopToolExecutor {
           };
         }
 
-        if (decision === 'always') {
+        // v0.3.4 (Bug B fix): rememberAllow fires for BOTH 'allow' and
+        // 'always' so the second runOnce passes the gate's cache check.
+        // The v0.3 session-scoped model makes 'allow' and 'always'
+        // equivalent within one session; 'always' persistence across
+        // sessions is v0.4 (SPEC-825 §2.2 out-of-scope).
+        if (decision === 'always' || decision === 'allow') {
           const key = askRuleKey(inv.name, inv.input);
           opts.permissions.rememberAllow(opts.sessionId, key);
         }

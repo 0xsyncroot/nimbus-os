@@ -2,21 +2,23 @@
 id: SPEC-825
 title: Confirm flow wiring — destructive tools prompt instead of silent error
 status: approved
-version: 0.1.0
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-16
 updated: 2026-04-16
-release: v0.3.2
+release: v0.3.4
 layer: permissions
 depends_on: [SPEC-401, SPEC-404, SPEC-301, SPEC-801]
 blocks: [SPEC-826]
-estimated_loc: 120
+estimated_loc: 140
 files_touched:
   - src/tools/executor.ts
   - src/tools/loopAdapter.ts
+  - src/permissions/gate.ts
   - src/channels/cli/repl.ts
   - src/channels/cli/render.ts
   - tests/permissions/gate.test.ts
+  - tests/tools/loopAdapter.test.ts
   - tests/channels/cli/repl.prompt.test.ts
 ---
 
@@ -125,3 +127,19 @@ export async function confirm(question: string): Promise<'allow' | 'deny' | 'alw
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — v0.3.2 fix for user-caught LIVE bug (3ms silent error on Write in default mode); wires existing `confirm()` to loop adapter; populates `sideEffects` for acceptEdits fast-path
+- 2026-04-16 @hiepht: v0.3.4 **Bug B fix** — two wire defects prevented the
+  confirm `y` from actually re-executing the tool:
+  1. `gate.ts::decideByMode` only consulted the session allow-cache when a
+     rule matched with decision `'ask'`. The destructive-tool fallback
+     (`DESTRUCTIVE_TOOLS.has(inv.name) → 'ask'`) ignored the cache entirely,
+     so even after `rememberAllow()` the second `canUseTool` still returned
+     `'ask'`. Fixed by adding a pre-fallback cache probe.
+  2. `loopAdapter.ts::execute` only called `rememberAllow` for the `'always'`
+     decision. The more common `'allow'` (user answered `y`) skipped
+     `rememberAllow` and re-ran `runOnce` which hit the same fresh gate →
+     another `needs_confirm` error. In v0.3 there is no cross-session
+     persistence (§2.2), so `'allow'` and `'always'` are equivalent within a
+     session; both now `rememberAllow`. Cross-session distinction lands in
+     v0.4 persistence design.
+  Net user impact: confirm flow now actually writes the file. Regression
+  tests cover both `'allow'` and `'always'` plus the gate-fallback cache.

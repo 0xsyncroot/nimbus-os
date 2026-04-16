@@ -151,6 +151,32 @@ describe('SPEC-124: credential handling prompt section', () => {
       .join('\n');
     expect(text).toContain('NNNNNNNNNN:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');
   });
+
+  // v0.3.4 (Bug C regression): user reported agent claimed "đã nhận token"
+  // after Write tool returned an error — classic hallucination on tool
+  // failure. The CREDENTIAL_HANDLING section must carry an explicit
+  // anti-hallucination clause that ties success to `isError: false`.
+  test('Bug C regression: CREDENTIAL_HANDLING carries anti-hallucination clause on tool failure', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    // The phrase "TRUTHFULNESS ON TOOL FAILURE" anchors the clause.
+    expect(text).toContain('TRUTHFULNESS ON TOOL FAILURE');
+    // Must tell the model that error means NOT saved.
+    expect(text).toMatch(/credential is NOT saved/i);
+    // Must forbid the specific hallucination shape user observed ("đã nhận").
+    expect(text).toMatch(/Do NOT say[^.]*đã nhận/);
+    // Must tell the model NOT to propose user-paste-manually workaround.
+    expect(text).toMatch(/paste the token manually/i);
+  });
+
+  test('Bug C regression: CREDENTIAL_HANDLING ties success check to isError flag', () => {
+    const text = buildSystemPrompt({ memory: FIX_MEMORY(true), caps: CAPS_EXPLICIT })
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('\n');
+    // Only isError:false counts as save success.
+    expect(text).toContain('isError');
+  });
 });
 
 // SPEC-123: action-first bias

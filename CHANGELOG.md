@@ -4,6 +4,69 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.4-alpha] — 2026-04-16 — URGENT patch (3 user-caught regressions from v0.3.3)
+
+User repro flow: paste Telegram bot token → `[ASK] Cho em ghi file
+telegram.botToken? [Y/n/always/never] y` → `✗ Tool failed — run with
+--verbose for details.` → agent then hallucinates "em đã nhận token".
+
+### Fixed
+
+- **Bug A: `⋯ đang writing {path}` hybrid VN/EN label leak** (SPEC-826 v0.2) —
+  the renderer hardcoded the VN `đang ` verb prefix in front of a label
+  produced by the EN map whenever `detectLocale()` returned `'en'`. On
+  servers with `LANG=C.UTF-8` (WSL default) the locale detects as `en` and
+  the user saw the hybrid. Fix: moved the progressive verb inline into each
+  label (VN `đang ghi file …`, EN `writing …`); renderer is now
+  locale-agnostic. Added `MultiEdit`, `NotebookEdit`, `Ls`, and Bash `cmd`
+  key aliases so registry-emitted names never hit the unknown-tool fallback.
+  Propagated `args` on `tool_start` from `loop.ts` so the humanizer works
+  even without a pre-computed `humanLabel`.
+- **Bug B: confirm `y` → "Tool failed" generic error** (SPEC-825 v0.2) —
+  two defects meant the `y` decision never led to actual execution:
+  1. `gate.ts::decideByMode` consulted the session allow-cache only
+     inside the `ruleDecision === 'ask'` branch. The common destructive-tool
+     fallback path (`DESTRUCTIVE_TOOLS.has → 'ask'` with no matching rule)
+     ignored the cache, so `rememberAllow` was ineffective.
+  2. `loopAdapter.ts::execute` only called `rememberAllow` on the
+     `'always'` branch. `'allow'` (user answered `y`) re-ran `runOnce`
+     against a fresh gate, produced another `needs_confirm`, and the
+     canonical error content surfaced as the generic "Tool failed — run
+     with `--verbose`" (the `--verbose` dev hint in a user-facing CLI).
+  Fixes: gate now probes the cache before the destructive fallback;
+  loopAdapter populates the cache for both `'allow'` and `'always'` (they
+  are session-equivalent in v0.3; v0.4 will split them via cross-session
+  persistence). Renderer also extracts `errorCode` from `ToolResult.content`
+  into `tool_end` so the friendly formatter picks a per-code sentence.
+  Removed `--verbose` dev-hint from the default user-visible fallback.
+- **Bug C: agent hallucinates "đã nhận token" after tool failure** (SPEC-124
+  v0.2) — security-critical: user pasted a credential, Write tool failed,
+  agent replied "Em đã nhận token, nhưng mình chưa thể lưu/kết nối…" — the
+  user assumes the secret is stored when it is not. Fix: strengthened
+  `CREDENTIAL_HANDLING_SECTION` in the system prompt with a new
+  "TRUTHFULNESS ON TOOL FAILURE" hard-rule clause:
+  - `isError: true` ⟹ credential is NOT saved
+  - Forbid "đã nhận / saved / stored / got it" on any error tool_result
+  - Forbid proposing user-paste-manually workaround
+  - Re-read tool_result before claiming success (only `isError: false` counts)
+
+### Added (regression tests)
+
+- `tests/core/toolLabels.test.ts` — VN labels always start with `đang `,
+  EN labels never contain `đang` (covers all 15 built-in + fallback).
+  `LANG=C.UTF-8 → detectLocale === 'en'` pin.
+- `tests/channels/cli/render.test.ts` — explicit Bug A repro (`đang writing`
+  must NOT appear in EN path) + `MemoryTool` args-less composition.
+- `tests/permissions/gate.test.ts` — `rememberAllow` converts destructive
+  fallback `ask → allow` for Write / Bash / unknown-MCP-tool, no matching rule.
+- `tests/tools/loopAdapter.test.ts` (new) — end-to-end onAsk flow with the
+  real gate: `'allow'` actually re-executes the handler (Bug B pin);
+  `'always'` remembered across invocations with same target; `'deny'`
+  synthesizes `T_PERMISSION:user_denied` without handler call.
+- `tests/core/prompts.test.ts` — anchor phrases "TRUTHFULNESS ON TOOL FAILURE",
+  `credential is NOT saved`, `Do NOT say[…]đã nhận`, `paste the token manually`,
+  `isError` are all present in the system prompt.
+
 ## [0.3.3-alpha] — 2026-04-16 — URGENT patch (5 regressions from v0.3.2)
 
 ### Fixed
