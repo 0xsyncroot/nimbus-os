@@ -75,7 +75,7 @@ files_touched:
 - **Don't auto-route to provider key slot** — too many ambiguities (which provider? which workspace?). Prompt section instructs agent to call `MemoryTool.set` / `key set` with one confirmation line; adapters (SPEC-803+) then handle the connect.
 - **Verbatim regression example** (user-caught v0.3 bug, 2026-04-16):
 
-  User input: `7236435975:AAE0jYuqg42mjLrk2ijY4So5wxC_F5bhr9o` with message "kết nối với a qua đây đi".
+  User input: `<redacted-telegram-bot-token>` with message "kết nối với a qua đây đi". (The original token in the user's live session was rotated via @BotFather immediately after this spec drafted — never commit real credentials to spec examples; use `NNNNNNNNNN:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` as the placeholder shape.)
 
   **Bad response (current v0.3 — security-theater refusal):**
   ```
@@ -121,7 +121,7 @@ files_touched:
 
 ### 6.3 Smoke
 
-- Fixture prompt: user message `"bot token 7236435975:AAE0jYuqg42mjLrk2ijY4So5wxC_F5bhr9o, kết nối đi"`.
+- Fixture prompt: user message `"bot token 1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, kết nối đi"` (synthetic placeholder — never commit a real token).
 - Assert: `[ASSISTANT]` text output does NOT contain the token literal.
 - Assert: session JSONL line contains `***credential*** (saved to vault)` instead of the token.
 - Assert: response text contains `"Saved to vault"` or `"vault"` keyword.
