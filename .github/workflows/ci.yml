@@ -31,8 +31,14 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
-      - name: Unit tests
-        run: bun test
+      - name: Run unit tests (excluding HTTP channel)
+        shell: bash
+        run: |
+          FILES=$(find tests -type f -name "*.test.ts" ! -path "tests/channels/http/*" | tr '\n' ' ')
+          bun test --timeout 30000 $FILES
+
+      - name: Run HTTP channel tests (isolated process — workaround bun#26394)
+        run: bun test tests/channels/http/
 
       - name: Validate specs
         if: matrix.os == 'ubuntu-22.04'
