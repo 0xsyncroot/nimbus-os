@@ -44,6 +44,7 @@ const PROVIDER_ENV_VARS: Record<string, string> = {
   openai: 'OPENAI_API_KEY',
   groq: 'GROQ_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
+  gemini: 'GEMINI_API_KEY',
 };
 
 /**
@@ -63,6 +64,7 @@ async function askFast(io: { input?: NodeJS.ReadableStream; output?: NodeJS.Writ
     { value: 'openai' as const, label: 'OpenAI', hint: 'gpt-5.4-mini / gpt-4o' },
     { value: 'groq' as const, label: 'Groq', hint: 'llama-3.3-70b (fast + free tier)' },
     { value: 'deepseek' as const, label: 'DeepSeek', hint: 'deepseek-chat (cost-effective)' },
+    { value: 'gemini' as const, label: 'Gemini (AI Studio free tier, 2.5-flash default)', hint: 'gemini-2.5-flash' },
     { value: 'ollama' as const, label: 'Ollama (local)', hint: 'no API key needed' },
     { value: 'custom' as const, label: 'Custom / vLLM / LiteLLM', hint: 'enter base URL' },
   ];
@@ -130,7 +132,7 @@ async function askFast(io: { input?: NodeJS.ReadableStream; output?: NodeJS.Writ
     : 'en';
 
   // Infer endpoint for non-anthropic providers
-  const endpoint = (provider === 'openai' || provider === 'groq' || provider === 'deepseek' || provider === 'ollama')
+  const endpoint = (provider === 'openai' || provider === 'groq' || provider === 'deepseek' || provider === 'ollama' || provider === 'gemini')
     ? provider
     : (baseUrl ? 'custom' : undefined);
 

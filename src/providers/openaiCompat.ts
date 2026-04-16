@@ -23,7 +23,7 @@ export interface EndpointConfig {
   apiKeyEnv: string;
 }
 
-export type EndpointName = 'openai' | 'groq' | 'deepseek' | 'ollama';
+export type EndpointName = 'openai' | 'groq' | 'deepseek' | 'ollama' | 'gemini';
 
 const base = (over: Partial<ProviderCapabilities>): ProviderCapabilities => ({
   nativeTools: true,
@@ -60,6 +60,12 @@ export const ENDPOINTS: Record<EndpointName, EndpointConfig> = {
     baseUrl: 'http://localhost:11434/v1',
     capabilities: base({ promptCaching: 'none', maxContextTokens: 32_000 }),
     apiKeyEnv: 'OLLAMA_API_KEY',
+  },
+  gemini: {
+    id: 'openai-compat:gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    capabilities: base({ promptCaching: 'none', vision: 'both', maxContextTokens: 1_000_000 }),
+    apiKeyEnv: 'GEMINI_API_KEY',
   },
 };
 

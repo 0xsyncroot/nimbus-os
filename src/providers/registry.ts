@@ -43,6 +43,7 @@ const ENV_BY_PROVIDER: Record<string, string> = {
   groq: 'GROQ_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   ollama: 'OLLAMA_API_KEY',
+  gemini: 'GEMINI_API_KEY',
 };
 
 /**

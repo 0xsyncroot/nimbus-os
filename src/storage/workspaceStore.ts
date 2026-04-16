@@ -84,7 +84,7 @@ export interface CreateInput {
   name: string;
   defaultProvider?: string;
   defaultModel?: string;
-  defaultEndpoint?: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom';
+  defaultEndpoint?: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'gemini' | 'custom';
   defaultBaseUrl?: string;
   injectFailAfterDir?: () => Promise<void>;
 }

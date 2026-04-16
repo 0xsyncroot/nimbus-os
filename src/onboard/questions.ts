@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { createInterface } from 'node:readline';
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 
-export const EndpointEnum = z.enum(['openai', 'groq', 'deepseek', 'ollama', 'custom']);
+export const EndpointEnum = z.enum(['openai', 'groq', 'deepseek', 'ollama', 'gemini', 'custom']);
 export type Endpoint = z.infer<typeof EndpointEnum>;
 
 export const InitAnswersSchema = z.object({
@@ -14,7 +14,7 @@ export const InitAnswersSchema = z.object({
   primaryUseCase: z.string().min(3).max(200),
   voice: z.enum(['formal', 'casual', 'laconic', 'verbose']),
   language: z.enum(['en', 'vi']).default('en'),
-  provider: z.enum(['anthropic', 'openai', 'groq', 'deepseek', 'ollama']),
+  provider: z.enum(['anthropic', 'openai', 'groq', 'deepseek', 'ollama', 'gemini']),
   modelClass: z.enum(['flagship', 'workhorse', 'budget']),
   bashPreset: z.enum(['strict', 'balanced', 'permissive']).default('balanced'),
   endpoint: EndpointEnum.optional(),
@@ -108,12 +108,12 @@ export async function askAll(io: AskIO = {}): Promise<InitAnswers> {
   let baseUrl: string | undefined;
   if (provider !== 'anthropic') {
     // openai-compat needs an endpoint target + optional custom URL.
-    const inferred = (provider === 'openai' || provider === 'groq' || provider === 'deepseek' || provider === 'ollama')
+    const inferred = (provider === 'openai' || provider === 'groq' || provider === 'deepseek' || provider === 'ollama' || provider === 'gemini')
       ? provider : 'openai';
     endpoint = await askWithDefault(
-      'Endpoint (openai/groq/deepseek/ollama/custom)',
+      'Endpoint (openai/groq/deepseek/ollama/gemini/custom)',
       inferred,
-      oneOf(['openai', 'groq', 'deepseek', 'ollama', 'custom'] as const),
+      oneOf(['openai', 'groq', 'deepseek', 'ollama', 'gemini', 'custom'] as const),
       io,
     );
     if (endpoint === 'custom') {

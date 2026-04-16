@@ -174,6 +174,44 @@ describe('SPEC-401: gate — path validator always active', () => {
   });
 });
 
+describe('SPEC-825: gate — acceptEdits fast-path with sideEffects populated', () => {
+  test('canUseTool({name:"Write", sideEffects:"write"}, {mode:"acceptEdits"}) === "allow"', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const result = await gate.canUseTool(
+      { name: 'Write', input: { path: '/tmp/project/bot.py' }, sideEffects: 'write' },
+      ctx('acceptEdits'),
+    );
+    expect(result).toBe('allow');
+  });
+
+  test('canUseTool({name:"Edit", sideEffects:"write"}, {mode:"acceptEdits"}) === "allow"', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const result = await gate.canUseTool(
+      { name: 'Edit', input: { path: '/tmp/project/x.ts' }, sideEffects: 'write' },
+      ctx('acceptEdits'),
+    );
+    expect(result).toBe('allow');
+  });
+
+  test('canUseTool({name:"Bash", sideEffects:"exec"}, {mode:"acceptEdits"}) === "ask" (exec falls through)', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const result = await gate.canUseTool(
+      { name: 'Bash', input: { cmd: 'ls' }, sideEffects: 'exec' },
+      ctx('acceptEdits'),
+    );
+    expect(result).toBe('ask');
+  });
+
+  test('canUseTool({name:"Write"}, {mode:"default"}) === "ask" (no sideEffects, default mode)', async () => {
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+    const result = await gate.canUseTool(
+      { name: 'Write', input: { path: '/tmp/project/a.ts' } },
+      ctx('default'),
+    );
+    expect(result).toBe('ask');
+  });
+});
+
 describe('SPEC-401: gate — session isolation', () => {
   test('forgetSession clears remembered allows', async () => {
     const rules = compileRules([parseRule('Bash(rm:*)', 'ask', 'user')]);

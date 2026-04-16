@@ -1,23 +1,26 @@
-// welcome.ts — SPEC-823 T2: CLI welcome screen with earth-brown palette.
-// Three variants: full (first-run / >1h gap), compact (quick re-launch), plain (fallback).
+// welcome.ts — SPEC-824 T2/T3/T4: CLI welcome screen with mascot + earth-brown palette.
+// Four variants: full-wide (cols≥70), full-stacked (40≤cols<70), compact (returning <1h, cols≥60), plain.
 // NO emoji, NO figlet, NO animation. Static ANSI only.
 
 import {
-  EARTH_DEEP,
-  EARTH_LIGHT,
   EARTH_DIM,
   EARTH_GOLD,
-  EARTH_BARK,
+  EARTH_LIGHT,
+  LAYOUT_WIDE_MIN,
   RESET,
   DIM,
   isColorEnabled,
   stripAnsi,
 } from './colors.ts';
+import { MASCOT_HEIGHT, MASCOT_WIDTH, renderMascot } from './mascot.ts';
 
-// RESET and DIM are plain string constants in colors.ts; alias them to functions
-// so welcome.ts can call them with isColorEnabled() gate at render time.
+// RESET and DIM are plain string constants; alias to functions for isColorEnabled() gate.
 function r(): string { return isColorEnabled() ? RESET : ''; }
 function d(): string { return isColorEnabled() ? DIM : ''; }
+
+// ---------------------------------------------------------------------------
+// Public types — WelcomeInput signature UNCHANGED (API compat SPEC-824 §3)
+// ---------------------------------------------------------------------------
 
 export interface WelcomeInput {
   wsName: string;
@@ -38,7 +41,17 @@ export type WelcomeVariant = 'full' | 'compact' | 'plain';
 const STALE_SECONDS = 3600;
 
 // ---------------------------------------------------------------------------
-// Variant selector
+// Layout constants (SPEC-824 §layout math)
+// ---------------------------------------------------------------------------
+
+const WIDE_PADDING_L = 3;
+const WIDE_GUTTER = 3;
+const WIDE_PADDING_R = 2;
+// Right-text width = cols - (WIDE_PADDING_L + MASCOT_WIDTH + WIDE_GUTTER + WIDE_PADDING_R)
+// = cols - (3 + 13 + 3 + 2) = cols - 21
+
+// ---------------------------------------------------------------------------
+// Variant selector (SPEC-824 T4: narrow cutoff cols<40 → plain, was <60)
 // ---------------------------------------------------------------------------
 
 export function pickVariant(input: WelcomeInput): WelcomeVariant {
@@ -46,8 +59,8 @@ export function pickVariant(input: WelcomeInput): WelcomeVariant {
   if (env === 'full' || env === 'compact' || env === 'plain') return env;
   if (input.force) return input.force;
 
-  // Degrade to plain for non-color / non-TTY / narrow terminals
-  if (input.noColor || !input.isTTY || input.cols < 60) return 'plain';
+  // Degrade to plain for non-color / non-TTY / very narrow terminals
+  if (input.noColor || !input.isTTY || input.cols < 40) return 'plain';
 
   const firstRun = !input.numStartups || input.numStartups <= 1;
   if (firstRun) return 'full';
@@ -60,86 +73,141 @@ export function pickVariant(input: WelcomeInput): WelcomeVariant {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: truncate a string so its visible length (after ANSI strip) fits cols
+// Helper: truncate a line to fit visible cols
 // ---------------------------------------------------------------------------
 
 function fitLine(line: string, cols: number): string {
   const visible = stripAnsi(line);
   if (visible.length <= cols) return line;
-  // Trim from the plain content — rebuild with color if needed
-  const excess = visible.length - cols;
-  // Simple fallback: strip ANSI, truncate, return plain
-  return visible.slice(0, visible.length - excess);
+  return visible.slice(0, cols);
 }
 
 // ---------------------------------------------------------------------------
-// Full variant (~13 rows, first-run or >1h gap)
+// Build the 5 right-column text lines for full variant
+// ---------------------------------------------------------------------------
+
+function buildTextLines(input: WelcomeInput, maxWidth: number): string[] {
+  const R = r();
+  const gold = EARTH_GOLD();
+  const light = EARTH_LIGHT();
+  const dim = EARTH_DIM();
+  const ddim = d();
+
+  const notes = input.memoryNoteCount ?? 0;
+  const providerLabel = input.providerKind === 'anthropic'
+    ? 'anthropic'
+    : (input.endpoint ?? 'openai-compat');
+
+  // Line 1: "nimbus  v{version}" — use "nimbus" + DIM for now (no version field in WelcomeInput)
+  const line1 = fitLine(`${gold}nimbus${R}  ${ddim}personal AI OS${R}`, maxWidth);
+  // Line 2: "Welcome back, {wsName}."
+  const line2 = fitLine(`${light}Welcome back, ${R}${light}${input.wsName}${R}${light}.${R}`, maxWidth);
+  // Line 3: blank
+  const line3 = '';
+  // Line 4: workspace info
+  const line4 = fitLine(
+    `${ddim}workspace  ·  ${R}${dim}${input.wsName}  ·  ${notes} notes${R}`,
+    maxWidth,
+  );
+  // Line 5: model info
+  const line5 = fitLine(
+    `${ddim}model      ·  ${R}${dim}${input.model} (${providerLabel})${R}`,
+    maxWidth,
+  );
+
+  return [line1, line2, line3, line4, line5];
+}
+
+// ---------------------------------------------------------------------------
+// Full variant — wide layout (cols ≥ LAYOUT_WIDE_MIN)
+// Mascot (13 cols) zipped with 5 text lines, footer below.
+// ---------------------------------------------------------------------------
+
+function renderWide(input: WelcomeInput): string {
+  const R = r();
+  const ddim = d();
+  const cols = input.cols;
+  const rightWidth = cols - (WIDE_PADDING_L + MASCOT_WIDTH + WIDE_GUTTER + WIDE_PADDING_R);
+
+  const mascotLines = renderMascot();
+  const textLines = buildTextLines(input, rightWidth);
+
+  const paddingL = ' '.repeat(WIDE_PADDING_L);
+  const gutter = ' '.repeat(WIDE_GUTTER);
+
+  const zipped: string[] = [];
+  for (let i = 0; i < MASCOT_HEIGHT; i++) {
+    const mLine = mascotLines[i] ?? ' '.repeat(MASCOT_WIDTH);
+    const tLine = textLines[i] ?? '';
+    zipped.push(`${paddingL}${mLine}${gutter}${tLine}${R}`);
+  }
+
+  const footer = fitLine(
+    `  ${ddim}/help${R}  ${ddim}for commands   ·   Ctrl-C twice to exit${R}`,
+    cols,
+  );
+
+  return ['', ...zipped, footer, ''].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Full variant — stacked layout (40 ≤ cols < LAYOUT_WIDE_MIN)
+// Mascot block (indent 1), blank, text lines (indent 1), blank, footer.
+// ---------------------------------------------------------------------------
+
+function renderStacked(input: WelcomeInput): string {
+  const R = r();
+  const ddim = d();
+  const cols = input.cols;
+  const indent = ' ';
+
+  const mascotLines = renderMascot().map((l) => `${indent}${l}`);
+  const textLines = buildTextLines(input, cols - 1).map((l) => (l ? `${indent}${l}` : ''));
+  const footer = fitLine(
+    `${indent}${ddim}/help  for commands   ·   Ctrl-C twice to exit${R}`,
+    cols,
+  );
+
+  return ['', ...mascotLines, '', ...textLines, '', footer, ''].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Full variant dispatcher
 // ---------------------------------------------------------------------------
 
 function renderFull(input: WelcomeInput): string {
-  const R = r();
-  const gold = EARTH_GOLD();
-  const deep = EARTH_DEEP();
-  const light = EARTH_LIGHT();
-  const dim = EARTH_DIM();
-  const bark = EARTH_BARK();
-  const ddim = d();
-
-  const cols = input.cols;
-  const notes = input.memoryNoteCount ?? 0;
-  const providerLabel = input.providerKind === 'anthropic' ? 'anthropic' : (input.endpoint ?? 'openai-compat');
-  const startups = input.numStartups ?? 1;
-
-  const gradient = `${bark}░${R}${dim}▒${R}${deep}▓${R}`;
-
-  const lines: string[] = [
-    '',
-    fitLine(`  ${gradient} ${gold}nimbus${R}  ${light}personal AI OS${R}`, cols),
-    fitLine(`  ${deep}────────────────────────${R}`, cols),
-    fitLine(`  ${ddim}workspace${R}  ${light}${input.wsName}${R}`, cols),
-    fitLine(`  ${ddim}model     ${R}  ${deep}${input.model}${R}`, cols),
-    fitLine(`  ${ddim}provider  ${R}  ${dim}${providerLabel}${R}`, cols),
-    fitLine(`  ${ddim}memory    ${R}  ${dim}${notes} note${notes !== 1 ? 's' : ''}${R}`, cols),
-    fitLine(`  ${ddim}boot #    ${R}  ${dim}${startups}${R}`, cols),
-    fitLine(`  ${deep}────────────────────────${R}`, cols),
-    fitLine(`  ${ddim}/help${R}  ${dim}commands${R}   ${ddim}/model${R}  ${dim}switch model${R}`, cols),
-    fitLine(`  ${ddim}/ws${R}    ${dim}workspaces${R}  ${ddim}/cost${R}   ${dim}usage${R}`, cols),
-    fitLine(`  ${ddim}Ctrl-C twice to exit${R}`, cols),
-    '',
-  ];
-
-  return lines.join('\n');
+  if (input.cols >= LAYOUT_WIDE_MIN) return renderWide(input);
+  return renderStacked(input);
 }
 
 // ---------------------------------------------------------------------------
-// Compact variant (2 rows, quick re-launch)
+// Compact variant (SPEC-824 T3): single line, no mascot (cols ≥ 60 implied by pickVariant)
+// ░▒▓ nimbus ready  ·  {wsName}  ·  {model}  ·  {notes} notes    /help · Ctrl-C×2
 // ---------------------------------------------------------------------------
 
 function renderCompact(input: WelcomeInput): string {
   const R = r();
-  const bark = EARTH_BARK();
+  const light = EARTH_LIGHT();
   const dim = EARTH_DIM();
-  const deep = EARTH_DEEP();
-  const gold = EARTH_GOLD();
   const ddim = d();
 
   const notes = input.memoryNoteCount ?? 0;
-  const gradient = `${bark}░${R}${dim}▒${R}${deep}▓${R}`;
 
-  const line1 = fitLine(
-    `${gradient} ${gold}nimbus ready${R} ${ddim}·${R} ${deep}${input.wsName}${R} ${ddim}·${R} ${dim}${input.model}${R} ${ddim}·${R} ${dim}${notes} note${notes !== 1 ? 's' : ''}${R}`,
+  // Shaded prefix (CP437-safe)
+  const prefix = isColorEnabled()
+    ? `${dim}░▒▓${R} `
+    : '░▒▓ ';
+
+  const line = fitLine(
+    `${prefix}${light}nimbus ready${R}  ${ddim}·${R}  ${dim}${input.wsName}${R}  ${ddim}·${R}  ${dim}${input.model}${R}  ${ddim}·${R}  ${dim}${notes} notes${R}    ${ddim}/help · Ctrl-C×2${R}`,
     input.cols,
   );
-  const line2 = fitLine(
-    `${ddim}  /help for commands  Ctrl-C twice to exit${R}`,
-    input.cols,
-  );
 
-  return `${line1}\n${line2}`;
+  return line;
 }
 
 // ---------------------------------------------------------------------------
-// Plain variant (script-safe, always starts with [OK])
+// Plain variant (SPEC-824 §plain, unchanged from v0.3.1)
 // ---------------------------------------------------------------------------
 
 function renderPlain(input: WelcomeInput): string {
@@ -147,7 +215,7 @@ function renderPlain(input: WelcomeInput): string {
 }
 
 // ---------------------------------------------------------------------------
-// Public entry point
+// Public entry point — renderWelcome signature UNCHANGED
 // ---------------------------------------------------------------------------
 
 export function renderWelcome(input: WelcomeInput): string {

@@ -79,3 +79,10 @@ export const GHOST = '\x1b[2;3m';
 export const RULE_CHAR = '─';
 /** Reset all attributes */
 export const RESET = '\x1b[0m';
+
+// ---------------------------------------------------------------------------
+// SPEC-824 T2 — Layout threshold constants
+// ---------------------------------------------------------------------------
+
+/** Minimum columns for wide 2-column welcome layout (mascot + text side-by-side) */
+export const LAYOUT_WIDE_MIN = 70;

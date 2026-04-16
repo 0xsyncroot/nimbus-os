@@ -1,4 +1,5 @@
 // repl.ts — SPEC-801 T4+T5: interactive REPL wired to runTurn + slash dispatcher + SIGINT escalation.
+// SPEC-825: onAsk bridge wired to inline y/n/always/never prompt.
 
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
@@ -11,6 +12,7 @@ import { createTurnAbort, CANCEL_ESCALATION_WINDOW_MS } from '../../core/cancell
 import { createProviderFromConfig } from '../../providers/registry.ts';
 import type { Provider } from '../../ir/types.ts';
 import type { TurnContext } from '../../core/turn.ts';
+import type { ToolInvocation as LoopToolInvocation } from '../../core/loop.ts';
 import { createDefaultRegistry, createLoopAdapter, type ToolRegistry } from '../../tools/index.ts';
 import { createGate, compileRules, type Gate } from '../../permissions/index.ts';
 import { colors, prefixes } from './colors.ts';
@@ -42,7 +44,7 @@ interface ReplState {
   provider: Provider | null;
   model: string;
   providerKind: 'anthropic' | 'openai-compat';
-  endpoint: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom' | undefined;
+  endpoint: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'gemini' | 'custom' | undefined;
   baseUrl: string | undefined;
   mode: 'readonly' | 'default' | 'acceptEdits' | 'bypass';
   running: boolean;
@@ -271,7 +273,7 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
       continue;
     }
 
-    await runSingleTurn(state, trimmed, renderer, write);
+    await runSingleTurn(state, trimmed, renderer, write, input, output, isTTY);
   }
 
   if (isTTY) process.off('SIGWINCH', onSigwinch);
@@ -448,11 +450,84 @@ function makeReplContext(
   };
 }
 
+/** SPEC-825 T3: human-readable description of what the tool will do.
+ *  SPEC-826 will expand this properly; this is the v0.3.2 inline subset. */
+function humanizeToolInvocation(inv: LoopToolInvocation): string {
+  const input = (inv.input ?? {}) as Record<string, unknown>;
+  const path = typeof input['path'] === 'string' ? input['path'] : undefined;
+  const filePath = typeof input['filePath'] === 'string' ? input['filePath'] : path;
+  switch (inv.name) {
+    case 'Write': return `ghi file ${filePath ?? '?'}`;
+    case 'Edit': return `sửa ${filePath ?? '?'}`;
+    case 'MultiEdit': return `sửa nhiều ${filePath ?? '?'}`;
+    case 'Bash': {
+      const cmd = typeof input['cmd'] === 'string' ? input['cmd'] : typeof input['command'] === 'string' ? input['command'] : '?';
+      return `chạy lệnh: ${cmd.slice(0, 60)}`;
+    }
+    case 'NotebookEdit': return `sửa notebook ${filePath ?? '?'}`;
+    default: return inv.name;
+  }
+}
+
+/** SPEC-825 T3: parse y/n/always/never from raw answer string. */
+function parseConfirmAnswer(raw: string): 'allow' | 'deny' | 'always' | null {
+  const v = raw.trim().toLowerCase();
+  if (v === 'y' || v === 'yes' || v === '') return 'allow';
+  if (v === 'n' || v === 'no') return 'deny';
+  if (v === 'always' || v === 'a') return 'always';
+  if (v === 'never') return 'deny';
+  return null;
+}
+
+/** SPEC-825 T3: build the onAsk callback for the loop adapter.
+ *  Streams the question to output and reads one line from input.
+ *  Falls back to 'deny' on timeout (10s) or non-interactive TTY. */
+function makeOnAsk(
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+  isTTY: boolean,
+): ((inv: LoopToolInvocation) => Promise<'allow' | 'deny' | 'always'>) | undefined {
+  if (!isTTY) return undefined;
+  return async (inv: LoopToolInvocation): Promise<'allow' | 'deny' | 'always'> => {
+    const humanAction = humanizeToolInvocation(inv);
+    const question = `${colors.warn(prefixes.ask)} Cho em ${humanAction}? [Y/n/always/never] `;
+    output.write(question);
+    return new Promise<'allow' | 'deny' | 'always'>((resolve) => {
+      const rl = createInterface({ input, output, terminal: false });
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        rl.close();
+        output.write(`\n${colors.dim('(timeout — default: No)')}\n`);
+        resolve('deny');
+      }, 10_000);
+      rl.once('line', (line: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        rl.close();
+        const answer = parseConfirmAnswer(line);
+        resolve(answer === 'always' ? 'always' : answer === 'allow' ? 'allow' : 'deny');
+      });
+      rl.once('close', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve('deny');
+      });
+    });
+  };
+}
+
 async function runSingleTurn(
   state: ReplState,
   userMessage: string,
   renderer: ReturnType<typeof createRenderer>,
   write: (s: string) => void,
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+  isTTY: boolean,
 ): Promise<void> {
   const session = await getOrCreateSession(state.wsId);
   const abort = createTurnAbort();
@@ -481,6 +556,10 @@ async function runSingleTurn(
     provider,
     model: state.model,
   };
+  // SPEC-825: wire onAsk for interactive TTY (skipped in bypass mode — no prompts needed).
+  const onAsk = state.mode !== 'bypass'
+    ? makeOnAsk(input, output, isTTY)
+    : undefined;
   const toolAdapter = createLoopAdapter({
     registry: state.registry,
     permissions: state.gate,
@@ -488,6 +567,7 @@ async function runSingleTurn(
     sessionId: session.id,
     cwd: process.cwd(),
     mode: state.mode,
+    onAsk,
   });
   // SPEC-121: snapshot prior messages before the turn for rehydration
   const priorMessages = getCachedMessages(session.id);

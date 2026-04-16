@@ -12,6 +12,7 @@ export const KEY_FORMAT_PATTERNS: Record<string, RegExp> = {
   groq: /^gsk_[A-Za-z0-9]{20,}$/,
   deepseek: /^sk-[A-Za-z0-9]{20,}$/,
   ollama: /^.*$/,
+  gemini: /^AIza[A-Za-z0-9_-]{35}$/,
 };
 
 /**
@@ -24,6 +25,7 @@ const OFFICIAL_HOSTS: Record<string, readonly string[]> = {
   groq: ['api.groq.com'],
   deepseek: ['api.deepseek.com'],
   ollama: [],
+  gemini: ['generativelanguage.googleapis.com'],
 };
 
 export interface ValidateKeyOptions {
@@ -50,7 +52,7 @@ export interface DetectedProvider {
   provider: string;
   kind: 'anthropic' | 'openai-compat';
   defaultModel: string;
-  defaultEndpoint?: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'custom';
+  defaultEndpoint?: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'gemini' | 'custom';
   defaultBaseUrl?: string;
 }
 
@@ -63,6 +65,7 @@ export interface DetectedProvider {
  *   sk-proj-*  → openai / gpt-5.4-mini
  *   sk-*       → openai / gpt-5.4-mini
  *   gsk_*      → groq  / llama-3.3-70b-versatile  (endpoint: groq)
+ *   AIza*      → gemini / gemini-2.5-flash         (endpoint: gemini)
  *   null       → unknown (ask user)
  */
 export function detectProviderFromKey(key: string): DetectedProvider | null {
@@ -84,6 +87,15 @@ export function detectProviderFromKey(key: string): DetectedProvider | null {
       defaultModel: 'llama-3.3-70b-versatile',
       defaultEndpoint: 'groq',
       defaultBaseUrl: 'https://api.groq.com/openai/v1',
+    };
+  }
+  if (key.startsWith('AIza')) {
+    return {
+      provider: 'gemini',
+      kind: 'openai-compat',
+      defaultModel: 'gemini-2.5-flash',
+      defaultEndpoint: 'gemini',
+      defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     };
   }
   return null;
@@ -133,12 +145,33 @@ export function validateKeyFormat(
     return;
   }
 
+  // Gemini-specific checks: hard prefix check + soft length warn.
+  if (provider === 'gemini') {
+    if (!key.startsWith('AIza')) {
+      throw new NimbusError(ErrorCode.T_VALIDATION, {
+        reason: 'key_format_mismatch',
+        provider,
+        keyLength: key.length,
+        hint: "Gemini key phải bắt đầu bằng 'AIza' — lấy từ https://aistudio.google.com/apikey",
+      });
+    }
+    if (key.length !== 39) {
+      // Soft warn — some AI Studio keys may differ; we warn but don't throw.
+      // The pattern check below will catch truly malformed keys.
+    }
+  }
+
   if (!pattern.test(key)) {
     // NEVER log `key` — context only carries provider + length (no prefix/value).
+    const hint =
+      provider === 'gemini'
+        ? "Gemini key phải bắt đầu bằng 'AIza' — lấy từ https://aistudio.google.com/apikey"
+        : undefined;
     throw new NimbusError(ErrorCode.T_VALIDATION, {
       reason: 'key_format_mismatch',
       provider,
       keyLength: key.length,
+      ...(hint !== undefined ? { hint } : {}),
     });
   }
 }

@@ -12,7 +12,7 @@ export const WorkspaceSchema = z.object({
   lastUsed: z.number().int().positive(),
   defaultProvider: z.string().default('anthropic'),
   defaultModel: z.string().default('claude-sonnet-4-6'),
-  defaultEndpoint: z.enum(['openai', 'groq', 'deepseek', 'ollama', 'custom']).optional(),
+  defaultEndpoint: z.enum(['openai', 'groq', 'deepseek', 'ollama', 'gemini', 'custom']).optional(),
   defaultBaseUrl: z.string().url().optional(),
   // SPEC-823 T3 — additive boot-tracking fields; no migration required
   lastBootAt: z.number().int().nonnegative().optional(),

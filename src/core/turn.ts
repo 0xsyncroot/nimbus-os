@@ -30,8 +30,8 @@ export type LoopOutput =
   | { kind: 'chunk'; chunk: CanonicalChunk }
   | { kind: 'plan_announce'; reason: string; heuristic: string }
   | { kind: 'spec_announce'; summary: string }
-  | { kind: 'tool_start'; toolUseId: string; name: string }
-  | { kind: 'tool_end'; toolUseId: string; ok: boolean; ms: number }
+  | { kind: 'tool_start'; toolUseId: string; name: string; args?: Record<string, unknown>; humanLabel?: string }
+  | { kind: 'tool_end'; toolUseId: string; ok: boolean; ms: number; errorCode?: string; humanLabel?: string }
   | { kind: 'turn_end'; metric: TurnMetric };
 
 export const MAX_TOOL_ITERATIONS = 30;

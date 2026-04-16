@@ -103,7 +103,12 @@ async function runOne(
   // Permission gate (before handler; no side effects).
   try {
     const decision = await ctx.permissions.canUseTool(
-      { name: tool.name, input: (parsed.data ?? {}) as Record<string, unknown> },
+      {
+        name: tool.name,
+        input: (parsed.data ?? {}) as Record<string, unknown>,
+        // SPEC-825/404: populate sideEffects so acceptEdits fast-path fires for write-tier.
+        sideEffects: inferSideEffect(tool),
+      },
       {
         sessionId: ctx.sessionId,
         workspaceId: ctx.workspaceId,
@@ -201,4 +206,13 @@ function formatOutput(o: unknown): string {
 
 function safeStringify(v: unknown): string {
   try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+/** SPEC-825 T2: derive sideEffects tier from a tool's metadata.
+ *  Mirrors loopAdapter.effectOf — kept in sync here so executor can populate
+ *  the sideEffects field on every canUseTool call without importing loopAdapter. */
+export function inferSideEffect(tool: Pick<import('./types.ts').Tool, 'name' | 'readOnly'>): 'pure' | 'read' | 'write' | 'exec' {
+  if (tool.readOnly) return 'read';
+  if (tool.name === 'Bash') return 'exec';
+  return 'write';
 }

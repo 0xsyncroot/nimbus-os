@@ -2,7 +2,7 @@
 // Pure functions: take state, return string[]. No I/O here.
 
 import type { SlashCommand } from './slashCommands.ts';
-import { ACCENT, DIM, RESET, RULE_CHAR } from './colors.ts';
+import { ACCENT, DIM, RESET } from './colors.ts';
 
 // ---------------------------------------------------------------------------
 // RenderState union (§7 of spec)
@@ -38,11 +38,6 @@ function padOrTruncate(s: string, width: number): string {
   return t.padEnd(width);
 }
 
-/** Build a dim horizontal rule of exactly `cols` chars. */
-function rule(cols: number): string {
-  return `${DIM}${RULE_CHAR.repeat(Math.max(1, cols))}${RESET}`;
-}
-
 // ---------------------------------------------------------------------------
 // T2 — renderList (filter state)
 // ---------------------------------------------------------------------------
@@ -63,8 +58,6 @@ export function renderList(
 
   const visible = filtered.slice(0, MAX_VISIBLE);
   const lines: string[] = [];
-
-  lines.push(rule(cols));
 
   for (let i = 0; i < visible.length; i++) {
     const cmd = visible[i]!;
@@ -100,7 +93,6 @@ export function renderList(
  */
 export function renderArgCard(cmd: SlashCommand, cols: number): string[] {
   const lines: string[] = [];
-  lines.push(rule(cols));
 
   const header = `${ACCENT}▸ /${cmd.name}${RESET}  ${DIM}${cmd.description}${RESET}`;
   lines.push(` ${header}`);
@@ -158,7 +150,6 @@ export function groupByCategory(cmds: SlashCommand[]): Map<string, SlashCommand[
 export function renderEmpty(cmds: SlashCommand[], cols: number): string[] {
   const byCategory = groupByCategory(cmds);
   const lines: string[] = [];
-  lines.push(rule(cols));
 
   const nameW = nameColWidth(cols);
   const descAvail = Math.max(0, cols - nameW - 5);

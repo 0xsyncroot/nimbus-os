@@ -1,8 +1,10 @@
-// welcome.test.ts — SPEC-823 T5: snapshot tests + variant selector + width assertions.
+// welcome.test.ts — SPEC-824 T5: snapshot tests + variant selector + width assertions.
+// v0.3.1 snapshots deleted (superseded by SPEC-824 redesign).
+// New: wide-80, stacked-50, compact, plain snapshots + property test.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { pickVariant, renderWelcome, type WelcomeInput } from '../../../src/channels/cli/welcome.ts';
-import { stripAnsi } from '../../../src/channels/cli/colors.ts';
+import { LAYOUT_WIDE_MIN, stripAnsi } from '../../../src/channels/cli/colors.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,10 +20,6 @@ function baseInput(overrides: Partial<WelcomeInput> = {}): WelcomeInput {
     noColor: false,
     ...overrides,
   };
-}
-
-function lineCount(s: string): number {
-  return s.split('\n').filter((l) => l.length > 0).length;
 }
 
 function assertWidth(output: string, cols: number): void {
@@ -54,10 +52,10 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// pickVariant — input matrix
+// pickVariant — SPEC-824 T4: narrow cutoff now cols<40 (was <60)
 // ---------------------------------------------------------------------------
 
-describe('SPEC-823: pickVariant', () => {
+describe('SPEC-824: pickVariant', () => {
   test('first-run → full', () => {
     expect(pickVariant(baseInput({ numStartups: 1, isTTY: true, noColor: false }))).toBe('full');
   });
@@ -76,9 +74,15 @@ describe('SPEC-823: pickVariant', () => {
     expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, isTTY: true, noColor: false }))).toBe('compact');
   });
 
-  test('narrow cols → plain', () => {
+  // SPEC-824 T4: cutoff now cols<40 (not <60)
+  test('cols=39 with TTY → plain', () => {
     const lastBootAt = Math.floor(Date.now() / 1000) - 100;
-    expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, cols: 40, isTTY: true, noColor: false }))).toBe('plain');
+    expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, cols: 39, isTTY: true, noColor: false }))).toBe('plain');
+  });
+
+  test('cols=40 with TTY → compact (not plain)', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+    expect(pickVariant(baseInput({ numStartups: 5, lastBootAt, cols: 40, isTTY: true, noColor: false }))).toBe('compact');
   });
 
   test('NO_COLOR → plain', () => {
@@ -108,10 +112,117 @@ describe('SPEC-823: pickVariant', () => {
 });
 
 // ---------------------------------------------------------------------------
-// renderWelcome — variant-specific assertions
+// SPEC-824 snapshot: wide-80 layout (2-column with mascot)
 // ---------------------------------------------------------------------------
 
-describe('SPEC-823: renderPlain', () => {
+describe('SPEC-824: wide-80 layout (full, cols=80)', () => {
+  test('contains mascot block char ░', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
+    expect(out).toContain('░');
+  });
+
+  test('each line fits cols=80', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
+    assertWidth(out, 80);
+  });
+
+  test('contains workspace name', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', wsName: 'alpha', cols: 80 }));
+    expect(stripAnsi(out)).toContain('alpha');
+  });
+
+  test('contains model', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', model: 'claude-opus-4-5', cols: 80 }));
+    expect(stripAnsi(out)).toContain('claude-opus-4-5');
+  });
+
+  test('contains /help footer', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
+    expect(stripAnsi(out)).toContain('/help');
+  });
+
+  test(`uses wide layout when cols >= ${LAYOUT_WIDE_MIN}`, () => {
+    expect(LAYOUT_WIDE_MIN).toBe(70);
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
+    // Wide layout: mascot lines preceded by 3 spaces (WIDE_PADDING_L)
+    const lines = out.split('\n').filter((l) => stripAnsi(l).trim().length > 0);
+    // At least one line should start with 3 spaces (the left padding)
+    const hasPadded = lines.some((l) => stripAnsi(l).startsWith('   '));
+    expect(hasPadded).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-824 snapshot: stacked-50 layout (mascot above text)
+// ---------------------------------------------------------------------------
+
+describe('SPEC-824: stacked-50 layout (full, cols=50)', () => {
+  test('contains mascot block char ░', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 50 }));
+    expect(out).toContain('░');
+  });
+
+  test('each line fits cols=50', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 50 }));
+    assertWidth(out, 50);
+  });
+
+  test('contains workspace name', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', wsName: 'dev-ws', cols: 50 }));
+    expect(stripAnsi(out)).toContain('dev-ws');
+  });
+
+  test('contains /help footer', () => {
+    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 50 }));
+    expect(stripAnsi(out)).toContain('/help');
+  });
+
+  test('has more lines than wide layout (mascot stacked above text)', () => {
+    const stacked = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 50 }));
+    const wide = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
+    const stackedLines = stacked.split('\n').filter((l) => l.length > 0).length;
+    const wideLines = wide.split('\n').filter((l) => l.length > 0).length;
+    expect(stackedLines).toBeGreaterThan(wideLines);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-824 snapshot: compact variant (single line)
+// ---------------------------------------------------------------------------
+
+describe('SPEC-824: compact variant', () => {
+  test('produces exactly 1 non-empty line', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact' }));
+    const nonEmpty = out.split('\n').filter((l) => l.length > 0);
+    expect(nonEmpty).toHaveLength(1);
+  });
+
+  test('fits cols=80', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact', cols: 80 }));
+    assertWidth(out, 80);
+  });
+
+  test('contains workspace name + model', () => {
+    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact', wsName: 'dev', model: 'gpt-4o' }));
+    const plain = stripAnsi(out);
+    expect(plain).toContain('dev');
+    expect(plain).toContain('gpt-4o');
+  });
+
+  test('contains /help hint', () => {
+    const out = renderWelcome(baseInput({ force: 'compact' }));
+    expect(stripAnsi(out)).toContain('/help');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-824 snapshot: plain variant
+// ---------------------------------------------------------------------------
+
+describe('SPEC-824: plain variant', () => {
   test('starts with [OK]', () => {
     const out = renderWelcome(baseInput({ force: 'plain', noColor: true }));
     expect(out.startsWith('[OK]')).toBe(true);
@@ -126,63 +237,47 @@ describe('SPEC-823: renderPlain', () => {
     const out = renderWelcome(baseInput({ force: 'plain', wsName: 'test-ws', noColor: true }));
     expect(out).toContain('test-ws');
   });
-});
 
-describe('SPEC-823: renderCompact', () => {
-  test('produces at most 2 non-empty lines', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
-    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact' }));
-    expect(lineCount(out)).toBeLessThanOrEqual(2);
-  });
-
-  test('each line fits cols=80', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
-    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact', cols: 80 }));
-    assertWidth(out, 80);
-  });
-
-  test('stripAnsi output contains workspace + model', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
-    const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact', wsName: 'dev', model: 'gpt-4o' }));
-    const plain = stripAnsi(out);
-    expect(plain).toContain('dev');
-    expect(plain).toContain('gpt-4o');
-  });
-});
-
-describe('SPEC-823: renderFull', () => {
-  test('produces at most 15 lines', () => {
-    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
-    // count all lines including blank separators
-    const total = out.split('\n').length;
-    expect(total).toBeLessThanOrEqual(15);
-  });
-
-  test('each line fits cols=80', () => {
-    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols: 80 }));
-    assertWidth(out, 80);
-  });
-
-  test('contains workspace, model, provider info', () => {
-    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', wsName: 'alpha', model: 'claude-opus-4-5', providerKind: 'anthropic' }));
-    const plain = stripAnsi(out);
-    expect(plain).toContain('alpha');
-    expect(plain).toContain('claude-opus-4-5');
-    expect(plain).toContain('anthropic');
-  });
-
-  test('memory note count shown', () => {
-    const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', memoryNoteCount: 7 }));
-    const plain = stripAnsi(out);
-    expect(plain).toContain('7 note');
+  test('contains model', () => {
+    const out = renderWelcome(baseInput({ force: 'plain', model: 'gemini-pro', noColor: true }));
+    expect(out).toContain('gemini-pro');
   });
 });
 
 // ---------------------------------------------------------------------------
-// NO_COLOR regression: EARTH_* constants return ''
+// SPEC-824: property test — stripAnsi(line).length ≤ cols for cols in [35, 50, 80, 120]
 // ---------------------------------------------------------------------------
 
-describe('SPEC-823: NO_COLOR strips ANSI', () => {
+describe('SPEC-824: width property test', () => {
+  const colSizes = [35, 50, 80, 120];
+
+  for (const cols of colSizes) {
+    test(`all lines fit within cols=${cols} (full variant)`, () => {
+      const out = renderWelcome(baseInput({ numStartups: 1, force: 'full', cols }));
+      assertWidth(out, cols);
+    });
+
+    test(`all lines fit within cols=${cols} (compact variant)`, () => {
+      const lastBootAt = Math.floor(Date.now() / 1000) - 100;
+      const out = renderWelcome(baseInput({ numStartups: 5, lastBootAt, force: 'compact', cols }));
+      assertWidth(out, cols);
+    });
+
+    test(`plain variant cols=${cols}: output is script-safe single line`, () => {
+      const out = renderWelcome(baseInput({ force: 'plain', noColor: true, cols }));
+      // Plain is script-compat fixed output — check it's a single non-empty line
+      const lines = out.split('\n').filter((l) => l.length > 0);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]!.startsWith('[OK]')).toBe(true);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// NO_COLOR regression: EARTH_* functions return ''
+// ---------------------------------------------------------------------------
+
+describe('SPEC-824: NO_COLOR strips ANSI', () => {
   test('compact output has no ANSI under NO_COLOR', () => {
     process.env['NO_COLOR'] = '1';
     delete process.env['FORCE_COLOR'];
@@ -200,33 +295,15 @@ describe('SPEC-823: NO_COLOR strips ANSI', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Narrow terminal → plain fallback
-// ---------------------------------------------------------------------------
-
-describe('SPEC-823: narrow terminal fallback', () => {
-  test('cols=40 with TTY → plain variant', () => {
-    const lastBootAt = Math.floor(Date.now() / 1000) - 100;
-    const variant = pickVariant(baseInput({ numStartups: 5, lastBootAt, cols: 40, isTTY: true, noColor: false }));
-    expect(variant).toBe('plain');
-  });
-
-  test('plain output fits width=40', () => {
-    const out = renderWelcome(baseInput({ force: 'plain', wsName: 'dev', model: 'm', noColor: true, cols: 40 }));
-    assertWidth(out, 80); // plain is always short
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Performance budget
 // ---------------------------------------------------------------------------
 
-describe('SPEC-823: performance', () => {
+describe('SPEC-824: performance', () => {
   test('renderWelcome is synchronous and fast', () => {
     const input = baseInput({ numStartups: 1, force: 'full', cols: 80 });
     const start = performance.now();
     for (let i = 0; i < 100; i++) renderWelcome(input);
     const avg = (performance.now() - start) / 100;
-    // p99 proxy: avg * 3 < 10ms (very conservative)
     expect(avg).toBeLessThan(10);
   });
 });

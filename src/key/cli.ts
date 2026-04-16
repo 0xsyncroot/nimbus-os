@@ -132,6 +132,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   groq: 'llama-3.3-70b-versatile',
   deepseek: 'deepseek-chat',
   ollama: 'llama3.2',
+  gemini: 'gemini-2.5-flash',
 };
 
 /**

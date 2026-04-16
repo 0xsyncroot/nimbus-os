@@ -80,11 +80,11 @@ describe('SPEC-822: renderList — wide terminal', () => {
     const lines = renderList(state, 80);
 
     // Check accent marker present in ANSI output for first (selected) row
-    const selectedLine = lines[1] ?? '';
+    const selectedLine = lines[0] ?? '';
     expect(selectedLine).toContain('▸');
     expect(selectedLine).toContain('/help');
     // Other rows should NOT have accent marker for the selected symbol
-    const unselectedLine = lines[2] ?? '';
+    const unselectedLine = lines[1] ?? '';
     expect(unselectedLine).not.toContain('▸');
   });
 
@@ -94,11 +94,11 @@ describe('SPEC-822: renderList — wide terminal', () => {
     const lines = renderList(state, 80);
 
     const plainAll = plainLines(lines);
-    // row 0 = rule, row 1 = first item (index 0 = help, not selected)
-    expect(plainAll[1]).toContain('/help');
+    // row 0 = first item (index 0 = help, not selected)
+    expect(plainAll[0]).toContain('/help');
     // selected row (index 1 = model)
-    expect(plainAll[2]).toContain('/model');
-    expect(lines[2]).toContain('▸'); // marker on selected
+    expect(plainAll[1]).toContain('/model');
+    expect(lines[1]).toContain('▸'); // marker on selected
   });
 
   test('keybind legend footer is present', () => {
@@ -364,5 +364,48 @@ describe('SPEC-822: T8/T9 — fallback detection', () => {
       if (orig === undefined) delete process.env['TERM'];
       else process.env['TERM'] = orig;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Suite 7: Regression — no stray full-width rule above slash menu (UX bug fix)
+// Simulates: welcome screen printed, then user types '/' → renderEmpty called.
+// None of renderEmpty / renderList / renderArgCard should emit a full-width
+// RULE_CHAR line as their first line (that was the UX bug: a ────... bar
+// appeared above the slash menu, looking like it belonged to the welcome screen).
+// ---------------------------------------------------------------------------
+
+describe('SPEC-822: regression — no leading rule in any render state', () => {
+  const RULE_CHAR = '─';
+
+  function isFullWidthRule(line: string, cols: number): boolean {
+    // Strip ANSI then check if it's entirely RULE_CHAR repeated to ~cols width
+    const plain = stripAnsi(line).trimEnd();
+    return plain.length > 0 && plain.split('').every((ch) => ch === RULE_CHAR) && plain.length >= cols * 0.8;
+  }
+
+  test('renderEmpty first line is NOT a full-width rule', () => {
+    const cmds = listCommands();
+    const cols = 80;
+    const lines = renderEmpty(cmds, cols);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(isFullWidthRule(lines[0] ?? '', cols)).toBe(false);
+  });
+
+  test('renderList first line is NOT a full-width rule', () => {
+    const cmds = makeStubCmds();
+    const cols = 80;
+    const state: RenderState = { kind: 'list', filtered: cmds, selected: 0 };
+    const lines = renderList(state, cols);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(isFullWidthRule(lines[0] ?? '', cols)).toBe(false);
+  });
+
+  test('renderArgCard first line is NOT a full-width rule', () => {
+    const cmd = makeStubCmds().find((c) => c.name === 'model')!;
+    const cols = 80;
+    const lines = renderArgCard(cmd, cols);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(isFullWidthRule(lines[0] ?? '', cols)).toBe(false);
   });
 });

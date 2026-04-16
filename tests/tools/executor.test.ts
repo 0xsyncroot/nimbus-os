@@ -1,9 +1,9 @@
-// tests/tools/executor.test.ts — SPEC-301 T4 executor tests.
+// tests/tools/executor.test.ts — SPEC-301 T4 executor tests + SPEC-825 sideEffects wire.
 
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
 import { createRegistry } from '../../src/tools/registry.ts';
-import { createExecutor } from '../../src/tools/executor.ts';
+import { createExecutor, inferSideEffect } from '../../src/tools/executor.ts';
 import { ErrorCode, NimbusError } from '../../src/observability/errors.ts';
 import type { Tool } from '../../src/tools/types.ts';
 import type { Gate } from '../../src/permissions/gate.ts';
@@ -138,5 +138,75 @@ describe('SPEC-301: executor', () => {
       expect(err).toBeInstanceOf(NimbusError);
       expect((err as NimbusError).code).toBe(ErrorCode.T_NOT_FOUND);
     }
+  });
+});
+
+describe('SPEC-825: executor — sideEffects field passed to canUseTool', () => {
+  test('inferSideEffect: readOnly tool → read', () => {
+    expect(inferSideEffect({ name: 'Read', readOnly: true })).toBe('read');
+    expect(inferSideEffect({ name: 'Grep', readOnly: true })).toBe('read');
+    expect(inferSideEffect({ name: 'Glob', readOnly: true })).toBe('read');
+  });
+
+  test('inferSideEffect: Bash (non-readOnly) → exec', () => {
+    expect(inferSideEffect({ name: 'Bash', readOnly: false })).toBe('exec');
+  });
+
+  test('inferSideEffect: Write/Edit (non-readOnly, non-Bash) → write', () => {
+    expect(inferSideEffect({ name: 'Write', readOnly: false })).toBe('write');
+    expect(inferSideEffect({ name: 'Edit', readOnly: false })).toBe('write');
+    expect(inferSideEffect({ name: 'MultiEdit', readOnly: false })).toBe('write');
+  });
+
+  test('executor passes sideEffects to canUseTool spy', async () => {
+    const r = createRegistry();
+    r.register({
+      name: 'Write',
+      description: 'write',
+      readOnly: false,
+      inputSchema: z.object({ path: z.string(), content: z.string() }).strict(),
+      async handler() { return { ok: true as const, output: {} }; },
+    });
+    const receivedSideEffects: string[] = [];
+    const spyGate: Gate = {
+      async canUseTool(inv) {
+        if (inv.sideEffects) receivedSideEffects.push(inv.sideEffects);
+        return 'allow';
+      },
+      rememberAllow() { /* noop */ },
+      forgetSession() { /* noop */ },
+    };
+    const ex = createExecutor({ registry: r });
+    await ex.run(
+      [{ toolUseId: '1', name: 'Write', input: { path: '/tmp/x.ts', content: 'hi' } }],
+      { ...baseCtx, permissions: spyGate },
+    );
+    expect(receivedSideEffects).toEqual(['write']);
+  });
+
+  test('executor passes sideEffects:exec for Bash', async () => {
+    const r = createRegistry();
+    r.register({
+      name: 'Bash',
+      description: 'bash',
+      readOnly: false,
+      inputSchema: z.object({ cmd: z.string() }).strict(),
+      async handler() { return { ok: true as const, output: {} }; },
+    });
+    const receivedSideEffects: string[] = [];
+    const spyGate: Gate = {
+      async canUseTool(inv) {
+        if (inv.sideEffects) receivedSideEffects.push(inv.sideEffects);
+        return 'allow';
+      },
+      rememberAllow() { /* noop */ },
+      forgetSession() { /* noop */ },
+    };
+    const ex = createExecutor({ registry: r });
+    await ex.run(
+      [{ toolUseId: '1', name: 'Bash', input: { cmd: 'ls' } }],
+      { ...baseCtx, permissions: spyGate },
+    );
+    expect(receivedSideEffects).toEqual(['exec']);
   });
 });

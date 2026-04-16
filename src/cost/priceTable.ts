@@ -34,6 +34,12 @@ export const PRICE_TABLE: Readonly<Record<Provider, ProviderTable>> = {
   ollama: {
     '*': { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, class: 'local' },
   },
+  gemini: {
+    'gemini-2.5-pro':        { in: 1.25, out: 10.00, cacheRead: 0.3125, cacheWrite: 0, class: 'flagship'  },
+    'gemini-2.5-flash':      { in: 0.30, out: 2.50,  cacheRead: 0.075,  cacheWrite: 0, class: 'workhorse' },
+    'gemini-2.5-flash-lite': { in: 0.10, out: 0.40,  cacheRead: 0.025,  cacheWrite: 0, class: 'budget'    },
+    'gemini-2.0-flash':      { in: 0.10, out: 0.40,  cacheRead: 0.025,  cacheWrite: 0, class: 'budget'    },
+  },
 };
 
 const UNKNOWN_PRICE: Price = {

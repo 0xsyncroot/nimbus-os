@@ -124,18 +124,19 @@ describe('SPEC-801: render v0.2.8 — streaming + plan suppression', () => {
     expect(out.captured).toBe('');
   });
 
-  // ── Regression — existing events still work ─────────────────────────────────
+  // ── Regression — existing events still work (verbose mode preserves old format) ─
 
-  test('tool_start emits tool prefix line', () => {
+  test('tool_start in verbose mode emits tool name + toolUseId', () => {
     const out = makeStream();
-    const renderer = createRenderer(out);
-    renderer.handle({ kind: 'tool_start', toolUseId: 'tid_1', name: 'bash' });
-    expect(out.captured).toContain('bash');
+    const renderer = createRenderer(out, { verbose: true });
+    renderer.handle({ kind: 'tool_start', toolUseId: 'tid_1', name: 'Bash' });
+    expect(out.captured).toContain('Bash');
+    expect(out.captured).toContain('tid_1');
   });
 
-  test('tool_end emits ok prefix with duration', () => {
+  test('tool_end in verbose mode emits duration ms', () => {
     const out = makeStream();
-    const renderer = createRenderer(out);
+    const renderer = createRenderer(out, { verbose: true });
     renderer.handle({ kind: 'tool_end', toolUseId: 'tid_1', ok: true, ms: 42 });
     expect(out.captured).toContain('42ms');
   });
@@ -182,5 +183,136 @@ describe('SPEC-801: render v0.2.8 — streaming + plan suppression', () => {
     const renderer = createRenderer(out);
     renderer.flush();
     expect(out.captured).toBe('');
+  });
+});
+
+// ── SPEC-826: friendly tool-event rendering ───────────────────────────────────
+
+describe('SPEC-826: render — friendly tool event labels', () => {
+  beforeEach(() => {
+    delete process.env['NO_COLOR'];
+    delete process.env['FORCE_COLOR'];
+    delete process.env['NIMBUS_LANG'];
+    delete process.env['LANG'];
+  });
+
+  afterEach(() => {
+    delete process.env['NO_COLOR'];
+    delete process.env['FORCE_COLOR'];
+    delete process.env['NIMBUS_LANG'];
+    delete process.env['LANG'];
+  });
+
+  // Snapshot 1: running state — VN
+  test('tool_start emits ⋯ đang {label} (vi)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'vi' });
+    renderer.handle({
+      kind: 'tool_start',
+      toolUseId: 'call_abc123',
+      name: 'Write',
+      args: { path: 'bot.py' },
+    });
+    // Must contain the label, NOT toolUseId or raw tool name prefix
+    expect(out.captured).toContain('đang ghi file bot.py');
+    expect(out.captured).toContain('\u22EF'); // ⋯
+    expect(out.captured).not.toContain('call_abc123');
+    expect(out.captured).not.toContain('[TOOL]');
+  });
+
+  // Snapshot 2: running state — EN
+  test('tool_start emits ⋯ đang {label} (en)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'en' });
+    renderer.handle({
+      kind: 'tool_start',
+      toolUseId: 'call_abc123',
+      name: 'Write',
+      args: { path: 'bot.py' },
+    });
+    expect(out.captured).toContain('đang writing bot.py');
+    expect(out.captured).toContain('\u22EF');
+    expect(out.captured).not.toContain('call_abc123');
+  });
+
+  // Snapshot 3: ok state — VN (humanLabel provided by loop)
+  test('tool_end ok with humanLabel emits ✓ {label} (vi)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'vi' });
+    renderer.handle({
+      kind: 'tool_end',
+      toolUseId: 'call_abc123',
+      ok: true,
+      ms: 38,
+      humanLabel: 'ghi file bot.py',
+    });
+    expect(out.captured).toContain('\u2713'); // ✓
+    expect(out.captured).toContain('ghi file bot.py');
+    expect(out.captured).not.toContain('call_abc123');
+    expect(out.captured).not.toContain('38ms');
+  });
+
+  // Snapshot 4: error state — VN
+  test('tool_end error emits ✗ {friendly error} (vi)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'vi' });
+    renderer.handle({
+      kind: 'tool_end',
+      toolUseId: 'call_abc123',
+      ok: false,
+      ms: 10,
+      errorCode: 'T_TIMEOUT',
+    });
+    expect(out.captured).toContain('\u2717'); // ✗
+    expect(out.captured).not.toContain('T_TIMEOUT');
+    expect(out.captured).not.toContain('call_abc123');
+    expect(out.captured).not.toContain('10ms');
+    // Should contain the VN friendly message
+    expect(out.captured).toContain('Quá lâu');
+  });
+
+  // Snapshot 5: error state — EN
+  test('tool_end error emits ✗ {friendly error} (en)', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { locale: 'en' });
+    renderer.handle({
+      kind: 'tool_end',
+      toolUseId: 'call_xyz',
+      ok: false,
+      ms: 5,
+      errorCode: 'P_NETWORK',
+    });
+    expect(out.captured).toContain('\u2717');
+    expect(out.captured).toContain('retrying');
+    expect(out.captured).not.toContain('P_NETWORK');
+  });
+
+  // Verbose mode preserves old format
+  test('verbose mode: tool_start emits [TOOL] → name + toolUseId', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { verbose: true });
+    renderer.handle({ kind: 'tool_start', toolUseId: 'call_xyz', name: 'Bash' });
+    expect(out.captured).toContain('[TOOL]');
+    expect(out.captured).toContain('Bash');
+    expect(out.captured).toContain('call_xyz');
+    expect(out.captured).not.toContain('\u22EF');
+  });
+
+  test('verbose mode: tool_end ok emits toolUseId + ms', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { verbose: true });
+    renderer.handle({ kind: 'tool_end', toolUseId: 'call_xyz', ok: true, ms: 99 });
+    expect(out.captured).toContain('call_xyz');
+    expect(out.captured).toContain('99ms');
+  });
+
+  test('verbose mode: tool_end error emits toolUseId + ms', () => {
+    const out = makeStream();
+    const renderer = createRenderer(out, { verbose: true });
+    renderer.handle({ kind: 'tool_end', toolUseId: 'call_xyz', ok: false, ms: 5, errorCode: 'T_CRASH' });
+    expect(out.captured).toContain('call_xyz');
+    expect(out.captured).toContain('5ms');
+    // In verbose mode the raw prefixes are shown, not friendly messages
+    expect(out.captured).toContain('[ERROR]');
   });
 });
