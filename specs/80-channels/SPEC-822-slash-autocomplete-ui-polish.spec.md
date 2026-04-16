@@ -10,7 +10,7 @@ release: v0.3
 layer: channels
 depends_on: [SPEC-801]
 blocks: []
-estimated_loc: 400
+estimated_loc: 310
 files_touched:
   - src/channels/cli/slashAutocomplete.ts
   - src/channels/cli/slashRenderer.ts
@@ -36,7 +36,7 @@ files_touched:
 - **Accent + dim** color scheme (replace inverse video `\x1b[7m` with `\x1b[38;5;39m` + `▸` marker + dim unselected)
 - **Category grouping**: extend `SlashCommand` with `category?: 'session'|'workspace'|'model'|'system'`; empty-picker groups by category
 - **Arg hints**: extend `SlashCommand` with `argHint?: string` (e.g. `[name]`) + `argChoices?: string[]` for enum args (`/mode`, `/thinking`)
-- **Ghost text**: first-match autocomplete after cursor, dim `\x1b[38;5;240m`, Tab accepts
+- ~~**Ghost text**~~ — deferred to v0.3.1 (see §2.2)
 - **Partial redraw**: store `lastRenderedLines[]`, only rewrite changed rows via `\x1b[{n}F` + `\x1b[2K`
 - **Fixed-width name column** (40% of terminal width, capped at 20) with `truncateToWidth` on description
 - **Keybind legend** below list (dim footer): `↑↓ select   tab complete   enter run   esc cancel`
@@ -49,6 +49,7 @@ files_touched:
 - Per-user theme customization
 - Ink runtime
 - File path completion (`@` trigger) — separate spec later
+- Ghost text autocomplete (was T5) deferred to v0.3.1 — polish after core states ship
 
 ## 3. Constraints
 
@@ -87,12 +88,11 @@ files_touched:
 | T2 | `slashRenderer.ts` — renderList + accent/dim color scheme | selected row uses `▸` + accent, unselected dim | 60 | T1 |
 | T3 | `slashRenderer.ts` — renderArgCard (trailing space state) | `/model ` shows arg hint + examples | 40 | T1 |
 | T4 | `slashRenderer.ts` — renderEmpty (just `/` state) | 4 categories grouped inline | 40 | T1 |
-| T5 | `slashRenderer.ts` — renderGhost (autocomplete preview) | `\x1b[38;5;240m` ghost after cursor, Tab accept | 30 | T1 |
-| T6 | `slashAutocomplete.ts` — partial redraw with diff | <1KB per keystroke, no double-paint | 40 | T2-T5 |
+| T6 | `slashAutocomplete.ts` — partial redraw with diff | <1KB per keystroke, no double-paint | 40 | T2-T4 |
 | T7 | `colors.ts` — ACCENT/DIM/GHOST/RULE constants | re-usable across slash + markdown renders | 10 | — |
 | T8 | Fallback detection — `!isTTY \|\| cols<60 \|\| TERM=dumb` | old rendering preserved | 20 | T6 |
 | T9 | Feature flag `NIMBUS_SLASH_UI` | `plain` forces old renderer | 15 | T6 |
-| T10 | Tests + visual snapshots (.ansi.txt fixtures) | 12 snapshot tests across states | 120 | all |
+| T10 | Tests + visual snapshots (.ansi.txt fixtures) | 9 snapshot tests across states (ghost state removed) | 80 | all |
 
 ## 6. Verification
 
@@ -100,7 +100,6 @@ files_touched:
 - renderList: filter 3 cmds → correct layout, accent on sel, dim on others
 - renderArgCard: `/model ` → card with `[name]` + examples
 - renderEmpty: categorize 13 cmds into 4 groups, each category label dim
-- renderGhost: buffer `/mo` + filtered=[/model, /mode] → ghost `del` after cursor
 - Partial redraw: 2 keystrokes → 2nd writes only changed rows (assert bytes < 1KB)
 
 ### 6.2 Visual snapshots
@@ -137,7 +136,7 @@ type RenderState =
 function renderList(state: RenderState, cols: number): string[];
 function renderArgCard(cmd: SlashCommand, cols: number): string[];
 function renderEmpty(cmds: SlashCommand[], cols: number): string[];
-function renderGhost(cmd: SlashCommand, buffer: string, cols: number): string;
+// renderGhost deferred to v0.3.1
 
 function diffAndWrite(
   prev: string[],
@@ -162,3 +161,4 @@ function diffAndWrite(
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — Phase 1 analyst (Opus) report: 4 render states + 5 visual upgrades ported from Claude Code Ink pattern without Ink runtime.
+- 2026-04-16 @hiepht: v0.3 cost-review amendment — defer T5 renderGhost to v0.3.1; estimated_loc 400→310; T10 tests LoC 120→80; §2.2 out-of-scope updated; §6.1 ghost test removed; §7 renderGhost noted as deferred.

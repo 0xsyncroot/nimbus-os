@@ -56,6 +56,12 @@ files_touched:
 - Bearer token comparison uses `crypto.timingSafeEqual` to prevent timing attacks
 - Remote bind without TLS → `NimbusError(ErrorCode.P_PERMISSION_DENIED, {reason: 'remote bind requires TLS'})`
 
+### Security
+- WS bearer token transport: `Sec-WebSocket-Protocol: nimbus.v1, <token>` subprotocol OR `Authorization: Bearer <token>` on upgrade request. NEVER query string (leaks in access logs/referrer/process list).
+- Test: `?token=xxx` in WS URL returns 401.
+- Max 32 concurrent WebSocket connections per workspace (DoS prevention). 33rd connection → 503 Service Unavailable.
+- IP ban map: LRU cap 10K entries (prevent memory DoS on unique-IP attack).
+
 ### Performance
 - First WS token frame delivered <200ms after message receipt
 - Auth check <5ms per request
@@ -146,8 +152,9 @@ export function redeemPairingCode(code: string): Promise<string | null>   // ret
 ## 9. Open Questions
 
 - [ ] Should pairing code be displayed as QR + ASCII side-by-side, or QR only? (UX decision)
-- [ ] Maximum concurrent WebSocket connections per workspace (default unbounded for v0.3)?
+- [x] Maximum concurrent WebSocket connections per workspace — resolved: max 32 per workspace, 33rd → 503; IP ban map LRU capped at 10K entries.
 
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft initial for v0.3 sprint
+- 2026-04-16 @hiepht: v0.3 reviewer amendments — (7) WS bearer token transport: Sec-WebSocket-Protocol header or Authorization header on upgrade; query-string token → 401; (8) max 32 concurrent WS per workspace → 503; IP ban map LRU cap 10K entries; open question closed.

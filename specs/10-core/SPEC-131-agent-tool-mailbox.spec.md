@@ -15,10 +15,10 @@ files_touched:
   - src/tools/agentTool.ts
   - src/tools/sendMessage.ts
   - src/tools/receiveMessage.ts
-  - src/core/subAgent/mailbox.ts
-  - src/core/subAgent/trustWrap.ts
+  - src/tools/subAgent/mailbox.ts
+  - src/tools/subAgent/trustWrap.ts
   - tests/tools/agentTool.test.ts
-  - tests/core/subAgent/mailbox.test.ts
+  - tests/tools/subAgent/mailbox.test.ts
 ---
 
 # AgentTool + SendMessage + ReceiveMessage + Mailbox
@@ -40,7 +40,7 @@ files_touched:
 - `Mailbox`: in-memory ring buffer (last 256 per agent) + append-only JSONL at `~/.nimbus/workspaces/{ws}/mailbox/{agentId}.jsonl`
 - Message types: `task_assignment`, `task_result`, `status_update`, `error`, `cancel`, `heartbeat`
 - Delivery via SPEC-118 event bus topic `mailbox.deliver`
-- `trustWrap.ts`: all sub-agent payload text → `CanonicalBlock { type: 'text', text, trust: 'untrusted', origin }`
+- `trustWrap.ts`: all sub-agent payload text → `CanonicalBlock { type: 'text', text, trust: 'untrusted', origin }` (lives at `src/tools/subAgent/trustWrap.ts`)
 
 ### 2.2 Out-of-scope
 
@@ -63,10 +63,12 @@ files_touched:
 ### Performance
 - AgentTool blocking: cancelled via parent's AbortController; no zombie if timeout
 - ReceiveMessage: <5ms for 256-message ring buffer
+- Mailbox JSONL writes: batch fsync every 100ms or 16 messages (whichever first). Per-message write is append-only without fsync (OS-buffered); fsync on batch. Heartbeats DO NOT trigger fsync individually. Under sub-agent load: ≤10 fsync/sec.
+- Ring buffer is synchronous in-memory; persistent layer is eventually-consistent (last 100ms may be lost on crash).
 
 ## 4. Prior Decisions
 
-- **Trust wrapping at IR layer, not string convention** — `CanonicalBlock.trust: 'trusted' | 'untrusted'` is a first-class attribute; every byte from sub-agent crosses with this mark, provider adapter + system prompt both see it (META-004 extension)
+- **Trust wrapping at IR layer, not string convention** — `CanonicalBlock.trust: 'trusted' | 'untrusted'` is a first-class attribute; every byte from sub-agent crosses with this mark, provider adapter + system prompt both see it. Extends META-004 via additive `trust?: 'trusted'|'untrusted'` on CanonicalBlock. Optional field, backward-compatible. Bumps META-004 schemaVersion from 1 to 2 with migration: missing field → `'trusted'` default.
 - **Event bus delivery over polling** — reuse SPEC-118 topic `mailbox.deliver`; polling API as fallback for `ReceiveMessage` pull semantics
 - **JSONL persistence** — crash-safe, append-only, greppable, reuses SPEC-119 writer; no SQLite for v0.3
 - **Ring buffer + JSONL** — memory bounded (256 msgs), full history on disk for forensics
@@ -76,6 +78,7 @@ files_touched:
 
 | ID | Task | Acceptance | Est LoC | Depends |
 |----|------|-----------|---------|---------|
+| T0 | Amend META-004 spec to include trust field + schemaVersion=2 migration note (additive, 10 LoC) | META-004 updated with `trust?` field + migration note; atomic with SPEC-131 impl commit | 10 | — |
 | T1 | Mailbox store (ring + JSONL via SPEC-119) | write 300 → last 256 in-mem, 300 on disk | 90 | — |
 | T2 | trustWrap helpers + CanonicalBlock extension (META-004) | untrusted block type + provider adapter passthrough | 20 | — |
 | T3 | `AgentTool` — blocking spawn + await result + trust wrap | test: spawn, receive result wrapped | 90 | T1,T2,SPEC-130 |
@@ -122,13 +125,13 @@ const AgentToolInput = z.object({
 
 ## 8. Files Touched
 
-- `src/core/subAgent/mailbox.ts` (new, ~90 LoC)
-- `src/core/subAgent/trustWrap.ts` (new, ~20 LoC)
 - `src/tools/agentTool.ts` (new, ~90 LoC)
 - `src/tools/sendMessage.ts` (new, ~50 LoC)
 - `src/tools/receiveMessage.ts` (new, ~40 LoC)
+- `src/tools/subAgent/mailbox.ts` (new, ~90 LoC)
+- `src/tools/subAgent/trustWrap.ts` (new, ~20 LoC)
 - `tests/tools/agentTool.test.ts` (new, ~60 LoC)
-- `tests/core/subAgent/mailbox.test.ts` (new, ~40 LoC)
+- `tests/tools/subAgent/mailbox.test.ts` (new, ~40 LoC)
 
 ## 9. Open Questions
 
@@ -137,3 +140,4 @@ const AgentToolInput = z.object({
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — synthesized from Phase 1 sub-agent analyst report
+- 2026-04-16 @hiepht: v0.3 reviewer amendments — (1) relocate mailbox.ts+trustWrap.ts from src/core/subAgent/ to src/tools/subAgent/ (layer=tools, no violation); (2) document META-004 schemaVersion=2 migration for trust field; add T0 pre-task; (3) mailbox fsync batching constraint (100ms/16-msg batch, ≤10 fsync/sec, crash-consistency note)

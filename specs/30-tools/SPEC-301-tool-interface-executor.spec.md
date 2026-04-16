@@ -61,6 +61,7 @@ files_touched:
 ## 4. Prior Decisions
 
 - **`readOnly: boolean` flag (not `sideEffects` enum) for v0.1** — plan §6.4 mentions 4 categories (`pure|read|write|exec`) but v0.1 only needs binary split for partition. Upgrading to enum later is additive (default `readOnly:true → sideEffects:'read'`). SPEC-103 loop consumes the same flag. Revisit in v0.2 when MCP tools need granularity.
+- **`sideEffects?: 'pure'|'read'|'write'|'exec'` added as additive optional field (v0.3)** — SPEC-122, SPEC-131, and SPEC-310 all depend on the 4-category enum per SPEC-103 §4 partition contract. Field is optional (backward-compatible); consumers that need granularity check `sideEffects` first, fall back to `readOnly` for v0.1-era tools. This is the active API for v0.3+ tools. Changelog confirms this is the canonical enum to use going forward.
 - **Serial writes, parallel reads** — mirrors Claude Code `toolOrchestration.ts` pattern. Rationale: parallel writes create race conditions on workspace files; parallel reads are safe and fast for large codebases.
 - **Zod schemas live on the tool** — single source of truth, also used to generate JSON schema for provider `tools[]` param. No manual duplication.
 - **3-tier cancel not 2-tier** — turn AbortController alone cannot kill a child process; handlers install an `onAbort` cleanup that calls `proc.kill('SIGTERM')` then `SIGKILL` after grace period.
@@ -125,7 +126,8 @@ export interface Tool<I = unknown, O = unknown> {
   readonly name: string                          // e.g. 'Read', 'Bash'
   readonly description: string                   // LLM-facing
   readonly inputSchema: z.ZodType<I>
-  readonly readOnly: boolean                     // drives partition
+  readonly readOnly: boolean                     // drives partition (v0.1 binary split)
+  readonly sideEffects?: 'pure' | 'read' | 'write' | 'exec'  // ADDITIONAL optional field (v0.3+); backward-compat with readOnly. Used by SPEC-122, SPEC-131, SPEC-310 for 4-category partition logic. When present, takes precedence over readOnly for routing. Migration: readOnly:true → sideEffects:'read'; readOnly:false → sideEffects:'write'|'exec' per tool.
   readonly dangerous?: boolean                   // requires confirm in 'default' mode
   handler(input: I, ctx: ToolContext): Promise<ToolResult<O>>
 }
@@ -181,10 +183,11 @@ export function createCancellationScope(parent: AbortSignal): {
 ## 9. Open Questions
 
 - [ ] Concurrency cap configurable per-tool? Default 10 global, override per-tool if needed in v0.2.
-- [ ] **Cross-spec inconsistency with SPEC-103**: SPEC-103 loop references `Tool.sideEffects: 'pure'|'read'|'write'|'exec'` (4-category enum per plan §6.4) while SPEC-301 v0.1 uses `Tool.readOnly: boolean`. Deferred to v0.2 — rationale in §4 Prior Decisions. When v0.2 adopts enum, SPEC-103 and SPEC-301 must migrate together (partition logic + loop `sideEffects` filter). Tracking: do NOT implement enum in v0.1; SPEC-103 implementer should consume `readOnly` directly for now.
+- [x] **Cross-spec inconsistency with SPEC-103 resolved (v0.3)**: `Tool.sideEffects: 'pure'|'read'|'write'|'exec'` added as optional backward-compat field. SPEC-122, SPEC-131, SPEC-310 consumers use this enum. v0.1 tools using only `readOnly` continue to work. See §4 Prior Decisions for migration path.
 
 ## 10. Changelog
 
 - 2026-04-15 @hiepht: draft initial
 - 2026-04-15 @hiepht: review revisions — commit `readOnly:boolean` v0.1 (upgrade path to `sideEffects` enum in v0.2); document `dangerous` semantics; `ToolResult`→`CanonicalBlock` wrap boundary explicit
 - 2026-04-15 @hiepht: round-2 — mark SPEC-103 vs SPEC-301 `readOnly`/`sideEffects` divergence as explicit Open Question with v0.2 migration note
+- 2026-04-16 @hiepht: v0.3 reviewer amendment — add `sideEffects?: 'pure'|'read'|'write'|'exec'` as additive optional field to `Tool` interface; backward-compat with `readOnly`. This is the active API for v0.3+ tools (SPEC-122, SPEC-131, SPEC-310 all depend on this enum). Open Question closed.

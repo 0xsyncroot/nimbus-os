@@ -84,6 +84,7 @@ files_touched:
 
 | ID | Task | Acceptance | Est LoC | Depends |
 |----|------|-----------|---------|---------|
+| T0 | Flip SPEC-110 frontmatter: status → superseded, add `supersededBy: SPEC-132`. Atomic with SPEC-132 impl commit. | SPEC-110 frontmatter updated in same commit as first SPEC-132 code | 0 | — |
 | T1 | Zod schemas + types (TodoItem, TodoSnapshot, TodoStatus) | schema round-trip test | 30 | — |
 | T2 | `todoStore.ts` — append JSONL + read + latest + diff | 2 consecutive writes → 2 snapshots in file | 70 | T1 |
 | T3 | `TodoWriteTool` impl with full-list replacement + enforce 1 in_progress | status-transition rules tested | 80 | T2 |
@@ -160,3 +161,4 @@ interface TodoStore {
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — SPEC-110 is superseded. Plan-as-tool pattern ported from Claude Code (src/tools/TodoWriteTool/). Removes ~$0.001/turn Haiku pre-call cost. Net +180 LoC after SPEC-110 cleanup.
+- 2026-04-16 @hiepht: v0.3 reviewer amendment — add T0 to atomically flip SPEC-110 to superseded+supersededBy:SPEC-132 in same commit as first SPEC-132 impl.

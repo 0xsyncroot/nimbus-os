@@ -10,17 +10,18 @@ release: v0.3
 layer: tools
 depends_on: [SPEC-401, SPEC-152, META-003, META-009]
 blocks: []
-estimated_loc: 800
+estimated_loc: 590
 files_touched:
-  - src/skills/manifest.ts
-  - src/skills/registryClient.ts
-  - src/skills/analyzer.ts
-  - src/skills/sandbox.ts
-  - src/skills/installer.ts
-  - src/skills/revocation.ts
-  - tests/skills/analyzer.test.ts
-  - tests/skills/sandbox.test.ts
-  - tests/skills/installer.test.ts
+  - src/skills/registry/manifest.ts
+  - src/skills/registry/client.ts
+  - src/skills/registry/analyzer.ts
+  - src/skills/registry/sandbox.ts
+  - src/skills/registry/installer.ts
+  - src/skills/registry/revocation.ts
+  - tests/skills/registry/manifest.test.ts
+  - tests/skills/registry/analyzer.test.ts
+  - tests/skills/registry/sandbox.test.ts
+  - tests/skills/registry/installer.test.ts
 ---
 
 # Skills registry — trusted/community/local tiers with risk assessment
@@ -50,9 +51,8 @@ files_touched:
 - **Commands**: `nimbus skill search|install|list|info|upgrade|revoke|reassess|audit|undo`
 - **Upgrade**: diff-based — silent if perms identical, full re-prompt on any permission widening
 - **Version resolution**: exact-version-only for v0.3 (SAT solver deferred to v0.4 per cost review — de-risk timeline), per-workspace `skills.lock`
-- **Multi-workspace**: global content-addressed install, per-workspace activation with narrow-only permission overrides (never widen)
-- **Offline**: index 6h stale-while-revalidate, bundles immutable cache forever, revocation feed hard-fail install if >7d stale
-- **Revocation**: signed `revocations.json` polled on launch + 6h daemon tick → auto-quarantine to `~/.nimbus/skills/quarantine/`; non-dismissable banner until user resolves
+- **Multi-workspace**: global content-addressed install (per-workspace activation with narrow-only permission overrides deferred to v0.3.1)
+- **Offline**: index 6h stale-while-revalidate, bundles immutable cache forever
 
 ### 2.2 Out-of-scope
 
@@ -60,6 +60,7 @@ files_touched:
 - Web UI for registry browse (CLI only v0.3)
 - Paid skills / marketplace (future)
 - Cross-skill prompt composition (v0.5)
+- Per-workspace activation (T9), revocation feed poller (T10), audit-undo (T11) deferred to v0.3.1 per cost-review trim
 
 ## 3. Constraints
 
@@ -108,24 +109,20 @@ files_touched:
 | T6 | Risk report renderer | LOW/MED/HIGH format, typed-phrase HIGH confirm | 60 | T4 |
 | T7 | Install/upgrade/revoke commands | full CLI flow, perm-delta re-prompt on upgrade | 80 | T2,T3,T4,T5,T6 |
 | T8 | Exact-version resolution (SAT deferred v0.4) | resolve pinned versions, conflict → trace | 30 | T1 |
-| T9 | Per-workspace activation + narrow-only perms | skills.json + override validation | 60 | T7 |
-| T10 | Revocation feed poller + quarantine | signed feed, auto-quarantine, non-dismissable banner | 40 | T2 |
-| T11 | Audit log + undo | append-only JSONL, undo reverts last install within 24h | 30 | T7 |
-| T12 | Tests | all dims + flows covered | 300 | all |
+| T12 | Tests | all dims + flows covered | 210 | all |
 
 ## 6. Verification
 
 ### 6.1 Unit Tests
-- Manifest schema (accept/reject), sigstore signing/verify, 9 risk-dim detection fixtures, SAT solver, perm-narrowing, audit log append
+- `tests/skills/registry/*.test.ts`: Manifest schema (accept/reject), sigstore signing/verify, 9 risk-dim detection fixtures, SAT solver, perm-narrowing
 
 ### 6.2 E2E Tests
 - Full install → sandbox run → revoke flow
 - Typosquatting detection (Levenshtein block)
 - Permission-delta re-prompt on upgrade
-- Offline install with cached bundle → success; stale revocation >7d → refuse
+- Offline install with cached bundle → success
 
 ### 6.3 Security Checks
-- Revocation hard-fail on 7d stale
 - Worker sandbox escape attempt → blocked
 - Sigstore invalid-sig → rejected
 - `eval`/`new Function` in skill code → HIGH risk flagged
@@ -185,3 +182,4 @@ interface RiskReport {
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft — synthesized from 3 analyst reports (security, UX, architecture)
+- 2026-04-16 @hiepht: v0.3 reviewer amendments — (4) standardize all file paths to src/skills/registry/ nesting (frontmatter + §5 + §8 synced); (10) cost-review LoC trim: remove T9/T10/T11 (per-workspace activation, revocation poller, audit-undo) to v0.3.1; estimated_loc 800→590; §2.2 out-of-scope updated; §6.1/6.2/6.3 trimmed to match.

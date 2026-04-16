@@ -32,6 +32,7 @@ files_touched:
 ### 2.1 In-scope
 - `@slack/bolt` Socket Mode app — no public ingress required
 - OAuth install flow: `installer.ts` handles `oauth/install` + `oauth/redirect`; stores `botToken` + `userToken` in vault
+- OAuth state parameter: HMAC-SHA256(installSecret, nonce + expiresAt). Expires 5min. Verified on `/oauth/redirect`. Prevents CSRF bot-token hijack.
 - `channelWorkspaceMapping: Record<string, string>` (Slack channel ID → workspaceId)
 - `allowedUserIds: string[]` (Slack `U0…` format)
 - Unknown userId → silent drop + `security.event` on EventBus
@@ -75,7 +76,8 @@ files_touched:
 | ID | Task | Acceptance criteria | Est LoC | Depends |
 |----|------|---------------------|---------|---------|
 | T1 | `serde.ts`: Slack event → ChannelInboundEvent + text → mrkdwn | Unit: mentions stripped, code spans converted, emoji pass-through | 60 | — |
-| T2 | `installer.ts`: OAuth install + token vault write | Unit (mocked vault): tokens stored under `slack.botToken` + `slack.appToken` | 80 | — |
+| T_auth | HMAC state generation + verify (~20 LoC) | Unit: valid state accepted; tampered state rejected; expired (>5min) state rejected | 20 | — |
+| T2 | `installer.ts`: OAuth install + token vault write + HMAC state verification | Unit (mocked vault): tokens stored under `slack.botToken` + `slack.appToken`; CSRF attempt with invalid state → 400 | 80 | T_auth |
 | T3 | `adapter.ts`: bolt Socket Mode setup + allowedUserIds guard | Unit (mocked bolt): allowed userId → event published; unknown → security event | 110 | T1, T2 |
 | T4 | Block Kit approval UI + action handler | Unit: `buildApprovalBlocks` includes `requestId`; action callback routes to approve/deny | 50 | T3 |
 
@@ -140,3 +142,4 @@ export function runOAuthInstall(code: string): Promise<InstallResult>
 ## 10. Changelog
 
 - 2026-04-16 @hiepht: draft initial for v0.3 sprint
+- 2026-04-16 @hiepht: v0.3 reviewer amendment — add OAuth CSRF protection via HMAC-SHA256 state parameter (5min TTL, verified on redirect); add T_auth task (~20 LoC)
