@@ -1,4 +1,7 @@
 // mascot.ts — SPEC-824 T1: nimbus cloud + crescent moon mascot (5 rows × 13 cols).
+// @deprecated SPEC-853: Mascot rendering superseded by Welcome.tsx ASCII banner (Ink-native).
+//   Kept alive for NIMBUS_UI=legacy path (consumed by welcome.ts). Delete in v0.4.1 when
+//   SPEC-851 repl integration is complete. Do NOT add new callers here.
 // Uses CP437-safe block chars (░▒▓█▀▌·).
 // Returns plain strings (no ANSI) when isColorEnabled() is false.
 

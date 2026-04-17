@@ -1,4 +1,7 @@
 // welcome.ts — SPEC-824 T2/T3/T4: CLI welcome screen with mascot + earth-brown palette.
+// @deprecated SPEC-853: Replaced by src/channels/cli/ink/components/Welcome.tsx (Ink-native).
+//   Kept alive for NIMBUS_UI=legacy code path. SPEC-851 (repl integration) will cut over;
+//   schedule deletion in v0.4.1. Do NOT add new callers here.
 // Four variants: full-wide (cols≥70), full-stacked (40≤cols<70), compact (returning <1h, cols≥60), plain.
 // NO emoji, NO figlet, NO animation. Static ANSI only.
 
