@@ -4,6 +4,54 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.21-alpha] — 2026-04-17 — SPEC-311 fix ConnectTelegram bridge from CLI channel
+
+User test on v0.3.20 immediately after the SPEC-309 read-path fix landed:
+```
+personal › [prompt that triggers ConnectTelegram]
+  ⋯ using tool: ConnectTelegram
+  Allow tool: ConnectTelegram? — ↑↓ navigate, Enter select
+  > Yes
+  ✗ Tool failed (U_MISSING_CONFIG) — step did not complete.
+Chưa kết nối được — ConnectTelegram báo missing config: channel_runtime_bridge_required.
+```
+
+TelegramStatus (read path) was fixed in v0.3.20. ConnectTelegram (write path) still broke because the port's `startTelegram` threw `channel_runtime_bridge_required` instead of wiring the deps from the tool-layer `runtimeBridge` through to `runtime.startTelegram()`.
+
+### Root cause
+
+`src/channels/runtime.ts:354-368` registered a `ChannelService.startTelegram` closure that, when `isTelegramRunning()` was false, threw unconditionally with `reason: 'channel_runtime_bridge_required'`. It never consulted any bridge — the `runtimeBridge` state lives in `src/tools/builtin/Telegram.ts` (different layer), and the port had no parameter to carry deps across the boundary. Meanwhile `src/tools/builtin/Telegram.ts:115` called `svc.startTelegram(ctx.workspaceId)` with ONLY `wsId`, dropping the `runtimeBridge(ctx)` payload entirely. So the deps the REPL carefully wired at startup (`provider/model/registry/gate/cwd`) were resolved, stored in `Telegram.ts:deps`, and then discarded one line before the port call.
+
+Net effect: once the adapter wasn't already running, ConnectTelegram could NEVER start it. Only the idempotent `alreadyRunning:true` short-circuit worked.
+
+### Fix (`v0.3.21`, SPEC-311)
+
+**Option A chosen** — on-demand bridge in CLI (lazy start in-process). Rejected alternatives:
+- **Option B (punt to `nimbus telegram` verb)**: breaks the agent's action surface. `ConnectTelegram` is an agent tool by design (SPEC-808). Forcing the user to a separate CLI verb would also diverge from the Slack/Discord adapters landing in v0.2.
+- **Option C (daemon IPC)**: v0.4 dependency, not yet shipped.
+
+Diff:
+- `src/core/channelPorts.ts` — widen `ChannelService.startTelegram(wsId, deps?: unknown)`. `unknown` keeps `src/core/` layer-pure (no type edge to `src/tools/` or `src/permissions/`). Concrete shape owned by the tools layer (`TelegramRuntimeDeps`).
+- `src/channels/runtime.ts` — port impl now: (a) short-circuits on already-running, (b) throws `channel_runtime_bridge_required` ONLY when deps are absent AND not running, (c) casts deps to `Omit<StartTelegramOptions, 'wsId'>` and delegates to `runtime.startTelegram({ wsId, ...deps })`.
+- `src/tools/builtin/Telegram.ts` — `ConnectTelegram` now passes `deps` as the second arg to `svc.startTelegram(ctx.workspaceId, deps)`. One-line change at the call site; the existing `runtimeBridge` / `channel_runtime_not_wired` / `channel_runtime_deps_unavailable` guards stay in place for users outside a REPL.
+- `tests/tools/telegram.test.ts` — 3 new regression tests: (a) deps reach the port as the second arg, (b) already-running short-circuit still works without deps, (c) missing bridge surfaces the typed tool-side error, not the generic port-side fallback.
+- `specs/30-tools/SPEC-311-connect-telegram-bridge-through-port.spec.md` — new spec.
+
+### Security
+
+HARD RULE §10 compliant. No new call site writes `~/.nimbus/.vault-key` or `secrets.enc`. `runtime.startTelegram()` only READS `getTelegramBotToken` + `getAllowedUserIds` from vault; fails fast with `U_MISSING_CONFIG` if either is missing. `fetchBotUsername` does a single `getMe` round-trip (no auth stored).
+
+### Expected user experience after fix
+
+```
+personal › Em kết nối Telegram đi
+  ⋯ using tool: ConnectTelegram
+  Allow tool: ConnectTelegram? — > Yes
+  ✓ Telegram online as @hieptrungbot — 1 user(s) authorised. Open Telegram and send a message to the bot.
+```
+
+If token/allowlist missing, the user now sees the actionable hint from `runtime.startTelegram()` (e.g. `run nimbus telegram set-token …`) instead of the generic `channel_runtime_bridge_required`.
+
 ## [0.3.20-alpha] — 2026-04-17 — SPEC-309 fix TelegramStatus from CLI channel (composition bug)
 
 User test on v0.3.19:

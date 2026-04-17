@@ -349,22 +349,32 @@ function createRuntime(): ChannelRuntime {
     },
   };
 
-  // SPEC-833: register as the abstract ChannelService so tools can depend on
-  // the port (src/core/channelPorts.ts) without importing src/channels/**.
+  // SPEC-833 / SPEC-311: register as the abstract ChannelService so tools can
+  // depend on the port (src/core/channelPorts.ts) without importing
+  // src/channels/**. The port's `startTelegram` now accepts an opaque deps bag
+  // (shape owned by the tools layer as `TelegramRuntimeDeps`). When deps are
+  // supplied, we delegate to the runtime's full `startTelegram()` path that
+  // constructs the adapter, registers with the manager, subscribes to inbound
+  // events and begins long-polling. Without deps we still support the
+  // idempotent "already running" fast path so read-only queries are free.
   registerChannelService({
-    startTelegram: async (_wsId) => {
-      // runtimeBridge is not available here; tools must still use ConnectTelegram
-      // which injects deps via setTelegramRuntimeBridge(). The port delegates to
-      // the full startTelegram method after the bridge has been set by the REPL.
-      // We expose a no-deps path for status queries; full start requires bridge.
-      const running = runtime.isTelegramRunning();
-      if (running) {
+    startTelegram: async (wsId, deps) => {
+      if (runtime.isTelegramRunning()) {
         return { botUsername: runtime.getTelegramBotUsername() ?? 'bot' };
       }
-      throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
-        reason: 'channel_runtime_bridge_required',
-        hint: 'use ConnectTelegram tool (with runtimeBridge set) to start Telegram',
-      });
+      if (!deps) {
+        throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
+          reason: 'channel_runtime_bridge_required',
+          hint: 'use ConnectTelegram tool (with runtimeBridge set) to start Telegram',
+        });
+      }
+      // Structural cast — deps carries the same shape as StartTelegramOptions
+      // minus wsId (which travels as the first arg on the port). The tools
+      // layer guards the call site; this cast is safe because both sides
+      // compile against the same informal contract and the runtime validates
+      // the inner fields via getTelegramBotToken / getAllowedUserIds.
+      const typedDeps = deps as Omit<StartTelegramOptions, 'wsId'>;
+      return runtime.startTelegram({ wsId, ...typedDeps });
     },
     stopTelegram: () => runtime.stopTelegram(),
     isTelegramRunning: () => runtime.isTelegramRunning(),

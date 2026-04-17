@@ -245,6 +245,173 @@ describe('SPEC-309: TelegramStatus after getChannelRuntime bootstrap', () => {
   });
 });
 
+// SPEC-311: regression — ConnectTelegram from CLI must flow deps through
+// the ChannelService port so the adapter actually starts. Pre-SPEC-311 the
+// port's `startTelegram` threw `channel_runtime_bridge_required` for any
+// non-running state because the tools-layer bridge deps never left the tool.
+describe('SPEC-311: ConnectTelegram bridges deps through ChannelService port', () => {
+  let workDir: string;
+  let wsId: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'nimbus-tg-bridge-'));
+    process.env['NIMBUS_HOME'] = workDir;
+    process.env['NIMBUS_VAULT_PASSPHRASE'] = 'test-pass';
+    process.env['NIMBUS_SECRETS_BACKEND'] = 'file';
+    __resetSecretStoreCache();
+    __resetFileFallbackKey();
+    __resetChannelRuntime();
+    __resetChannelService();
+
+    const { meta } = await createWorkspaceDir({ name: 'tg-bridge' });
+    wsId = meta.id;
+    await switchWorkspace(wsId);
+    setTelegramRuntimeBridge(null);
+  });
+
+  afterEach(async () => {
+    delete process.env['NIMBUS_HOME'];
+    delete process.env['NIMBUS_VAULT_PASSPHRASE'];
+    delete process.env['NIMBUS_SECRETS_BACKEND'];
+    __resetSecretStoreCache();
+    __resetFileFallbackKey();
+    __resetChannelRuntime();
+    __resetChannelService();
+    setTelegramRuntimeBridge(null);
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  test('deps from runtimeBridge reach the port.startTelegram(wsId, deps) second arg', async () => {
+    // Mock service captures the opaque deps payload.
+    let capturedDeps: unknown = undefined;
+    let capturedWsId: string | null = null as string | null;
+    let running = false;
+    registerChannelService({
+      async startTelegram(calledWsId, deps) {
+        capturedWsId = calledWsId;
+        capturedDeps = deps;
+        running = true;
+        return { botUsername: 'bridgebot' };
+      },
+      async stopTelegram() {
+        running = false;
+      },
+      isTelegramRunning() {
+        return running;
+      },
+      getTelegramBotUsername() {
+        return running ? 'bridgebot' : null;
+      },
+      async getTelegramStatus(queryWsId) {
+        const summary = await readSummary(queryWsId);
+        return {
+          connected: running,
+          botUsername: running ? 'bridgebot' : undefined,
+          tokenPresent: summary.tokenPresent,
+          allowedUserIds: summary.allowedUserIds,
+        };
+      },
+    });
+
+    // Simulate REPL wiring the bridge with real-shaped deps.
+    const deps = {
+      provider: { id: 'test', generate: async () => ({}) } as unknown,
+      model: 'test-model',
+      registry: createRegistry() as unknown,
+      gate: createGate({ rules: compileRules([]), bypassCliFlag: true }) as unknown,
+      cwd: process.cwd(),
+    };
+    setTelegramRuntimeBridge(() => deps as never);
+
+    const tool = createConnectTelegramTool();
+    const res = await tool.handler({}, makeCtx(wsId));
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.output.botUsername).toBe('bridgebot');
+    expect(res.output.alreadyRunning).toBe(false);
+    expect(capturedWsId).toBe(wsId);
+    // Critical: port received the deps object. Before SPEC-311 this was `undefined`.
+    expect(capturedDeps).toBeDefined();
+    expect(capturedDeps).toBe(deps);
+  });
+
+  test('already-running fast path still works without deps (idempotent)', async () => {
+    let running = true; // start in running state
+    registerChannelService({
+      async startTelegram(_wsId, _deps) {
+        // Port impl MUST short-circuit on already-running without touching deps.
+        if (running) return { botUsername: 'alreadybot' };
+        throw new Error('should not reach');
+      },
+      async stopTelegram() {
+        running = false;
+      },
+      isTelegramRunning() {
+        return running;
+      },
+      getTelegramBotUsername() {
+        return running ? 'alreadybot' : null;
+      },
+      async getTelegramStatus(queryWsId) {
+        const summary = await readSummary(queryWsId);
+        return {
+          connected: running,
+          botUsername: running ? 'alreadybot' : undefined,
+          tokenPresent: summary.tokenPresent,
+          allowedUserIds: summary.allowedUserIds,
+        };
+      },
+    });
+    // No bridge set → but short-circuit fires before bridge is consulted.
+    setTelegramRuntimeBridge(null);
+
+    const tool = createConnectTelegramTool();
+    const res = await tool.handler({}, makeCtx(wsId));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.output.alreadyRunning).toBe(true);
+    expect(res.output.botUsername).toBe('alreadybot');
+  });
+
+  test('without runtimeBridge surfaces typed channel_runtime_not_wired (not generic bridge_required)', async () => {
+    let running = false;
+    registerChannelService({
+      async startTelegram(_wsId, _deps) {
+        throw new Error('should not reach — tool must guard before port');
+      },
+      async stopTelegram() {
+        running = false;
+      },
+      isTelegramRunning() {
+        return running;
+      },
+      getTelegramBotUsername() {
+        return null;
+      },
+      async getTelegramStatus(queryWsId) {
+        const summary = await readSummary(queryWsId);
+        return {
+          connected: running,
+          tokenPresent: summary.tokenPresent,
+          allowedUserIds: summary.allowedUserIds,
+        };
+      },
+    });
+    setTelegramRuntimeBridge(null);
+
+    const tool = createConnectTelegramTool();
+    const res = await tool.handler({}, makeCtx(wsId));
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error.code).toBe(ErrorCode.U_MISSING_CONFIG);
+    // The tool-layer guard fires first with a user-actionable reason; the
+    // generic channel_runtime_bridge_required from the port must NOT leak.
+    expect(res.error.context['reason']).toBe('channel_runtime_not_wired');
+    expect(res.error.context['reason']).not.toBe('channel_runtime_bridge_required');
+  });
+});
+
 // Sanity: registry shape check — ensures tool names don't collide with builtins.
 describe('SPEC-808: tool name hygiene', () => {
   test('telegram tools register without collision', () => {

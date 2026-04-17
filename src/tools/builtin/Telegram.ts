@@ -106,13 +106,13 @@ export function createConnectTelegramTool(): Tool<ConnectTelegramInput, ConnectT
           });
         }
 
-        // Full startTelegram requires the channel runtime's StartTelegramOptions.
-        // We delegate to the registered ChannelService which wraps the runtime.
-        // The runtime's startTelegram path needs provider/model/registry/gate;
-        // those are passed via the bridge into the runtime before this call resolves.
-        // The ChannelService.startTelegram will throw if the bridge hasn't been set;
-        // the REPL sets both the bridge AND calls startRepl wiring in the right order.
-        const { botUsername } = await svc.startTelegram(ctx.workspaceId);
+        // SPEC-311: pass deps through the port as an opaque bag. The concrete
+        // ChannelRuntime implementation (src/channels/runtime.ts) casts it back
+        // to StartTelegramOptions and calls the real startTelegram() path that
+        // validates vault config + opens the long-poll. Before SPEC-311 this
+        // call silently hit the port's "bridge required" fallback because the
+        // deps never left the tools layer.
+        const { botUsername } = await svc.startTelegram(ctx.workspaceId, deps);
         const status = await svc.getTelegramStatus(ctx.workspaceId);
         return {
           ok: true,

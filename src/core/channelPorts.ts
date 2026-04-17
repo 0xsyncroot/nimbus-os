@@ -23,10 +23,21 @@ export interface TelegramStatusInfo {
 /**
  * Abstract port: what the tools layer needs from the channel layer.
  * Implemented by the concrete ChannelRuntime in src/channels/runtime.ts.
+ *
+ * SPEC-311: `startTelegram` accepts an opaque `deps` bag. The tools layer owns
+ * the concrete shape (`TelegramRuntimeDeps` in src/tools/builtin/Telegram.ts:
+ * `{ provider, model, registry, gate, cwd }`); at the port boundary it is
+ * `unknown` so that src/core/ does not gain a type edge to src/tools/
+ * (forbidden by the layer DAG). The runtime implementation casts back to its
+ * own `StartTelegramOptions` shape since both sides agree structurally.
+ *
+ * When `deps` is omitted, the implementation MUST NOT attempt to spin up a
+ * fresh adapter — it may only report `{ botUsername }` for an already-running
+ * instance, otherwise throw `U_MISSING_CONFIG / reason=channel_runtime_bridge_required`.
  */
 export interface ChannelService {
   /** Start the Telegram adapter. Returns bot @username once live. */
-  startTelegram(wsId: string): Promise<{ botUsername: string }>;
+  startTelegram(wsId: string, deps?: unknown): Promise<{ botUsername: string }>;
 
   /** Stop the Telegram adapter. Idempotent. */
   stopTelegram(): Promise<void>;

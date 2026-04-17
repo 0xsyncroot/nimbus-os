@@ -14,8 +14,9 @@
 | META-009 | Threat model — attack vectors + mitigations | approved | 2026-04-15 |
 | META-010 | Naming conventions — files, identifiers, specs, commits | approved | 2026-04-15 |
 | META-011 | v0.4 CLI UI architecture — Ink port umbrella | draft | 2026-04-17 |
+| META-012 | UI error codes extension — U_UI_BUSY through P_OPERATION_DENIED | draft | 2026-04-17 |
 
-## v0.1 Feature Specs (33 total)
+## v0.1 Feature Specs (34 total)
 
 ### channels
 
@@ -109,6 +110,7 @@
 | SPEC-302 | Builtin FS tools (Read/Write/Edit/Grep/Glob) | implemented | SPEC-301, SPEC-401 | 400 |
 | SPEC-303 | Bash + pwsh tool with tier-1 security | implemented | SPEC-301, SPEC-401, SPEC-402, META-009 | 380 |
 | SPEC-304 | MemoryTool — append-only MEMORY.md writer | implemented | SPEC-301, SPEC-104, SPEC-401, META-003 | 120 |
+| SPEC-311 | ConnectTelegram — bridge deps through ChannelService port | approved | SPEC-309, SPEC-808, SPEC-833 | 40 |
 
 ## v0.2 Feature Specs (10 total)
 
@@ -273,22 +275,26 @@
 |----|-------|--------|------|---------|
 | SPEC-153 | Vault atomic-write + timestamped backup rotation | draft | SPEC-152, META-009 | 50 |
 
-## v0.4 Feature Specs (17 total)
+## v0.4 Feature Specs (23 total)
 
 ### channels
 
 | ID | Title | Status | Deps | Est LoC |
 |----|-------|--------|------|---------|
 | SPEC-840 | Ink 7 app bootstrap, theme tokens, base components | draft | META-001, META-010, META-011 | 450 |
-| SPEC-841 | Multi-line PromptInput with paste preservation | draft | META-011, SPEC-840 | 500 |
+| SPEC-841 | Multi-line PromptInput with paste preservation | draft | META-011, SPEC-840, SPEC-850 | 500 |
 | SPEC-842 | Slash autocomplete dropdown and /help overlay | draft | META-011, SPEC-840 | 300 |
 | SPEC-843 | Streaming output render with spinner and markdown cache | draft | META-011, SPEC-840 | 400 |
 | SPEC-844 | StructuredDiff colored unified diff for Write and Edit tools | draft | META-011, SPEC-840 | 200 |
 | SPEC-845 | Collapsed Read/Search coalescing and background task progress | draft | META-011, SPEC-843 | 150 |
-| SPEC-846 | PermissionDialog and per-tool request components | draft | META-011, SPEC-840, SPEC-830 | 350 |
-| SPEC-847 | Modal panels with alt-screen takeover for 8 slash commands | draft | META-011, SPEC-840, SPEC-849 | 350 |
+| SPEC-846 | PermissionDialog and per-tool request components | draft | META-011, SPEC-840, SPEC-830, SPEC-844 | 500 |
+| SPEC-847 | Modal panels with alt-screen takeover for 8 slash commands | draft | META-011, SPEC-840, SPEC-842, SPEC-849 | 350 |
 | SPEC-848 | StatusLine, PromptInputFooter, and TaskListV2 components | draft | META-011, SPEC-840 | 300 |
-| SPEC-849 | Meta-UX helpers and keybinding manager | draft | META-009, META-011, SPEC-840 | 250 |
+| SPEC-849 | Meta-UX helpers and keybinding manager | draft | META-009, META-011, META-012, SPEC-840 | 250 |
+| SPEC-851 | repl.ts Ink integration glue — startRepl entry point | draft | META-011, SPEC-840, SPEC-841, SPEC-842, SPEC-848 | 200 |
+| SPEC-852 | inline-error-dialog — Ink ErrorDialog replaces raw JSON errors | draft | META-011, SPEC-840, META-012 | 120 |
+| SPEC-853 | welcome-byline — Ink Welcome replaces welcome.ts + mascot.ts | draft | META-011, SPEC-840 | 80 |
+| SPEC-855 | ink-onboarding-rewrite — nimbus init wizard in Ink (7-step) | draft | META-011, SPEC-840, SPEC-841, SPEC-850 | 350 |
 
 ### core
 
@@ -300,6 +306,18 @@
 | SPEC-140 | TrustLedger — signed append-only registry of self-written artifacts | draft | SPEC-119, SPEC-152, META-009 | 200 |
 | SPEC-141 | MemoryRecall BM25 — lexical query over MEMORY + sessions | draft | SPEC-104, SPEC-102, SPEC-105, SPEC-151 | 180 |
 | SPEC-142 | Hooks middleware — pre/postToolUse + userPromptSubmit | draft | SPEC-118, SPEC-301, SPEC-103, SPEC-401 | 300 |
+
+### meta
+
+| ID | Title | Status | Deps | Est LoC |
+|----|-------|--------|------|---------|
+| SPEC-854 | locale-policy — all user strings through t(key, locale) | draft | META-011, SPEC-180 | 100 |
+
+### onboard
+
+| ID | Title | Status | Deps | Est LoC |
+|----|-------|--------|------|---------|
+| SPEC-850 | keyPromptCore — non-Ink pre-Ink key input pathway | draft | META-011, SPEC-151 | 80 |
 
 ### tools
 

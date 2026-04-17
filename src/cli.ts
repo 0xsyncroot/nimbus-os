@@ -135,7 +135,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.3.20-alpha\n');
+      process.stdout.write('nimbus-os 0.3.21-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -235,7 +235,7 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.3.20-alpha';
+        const current = '0.3.21-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);

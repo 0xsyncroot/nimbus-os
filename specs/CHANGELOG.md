@@ -2,6 +2,56 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-17 — v0.3.21-alpha SPEC-311: ConnectTelegram bridges deps through ChannelService port
+
+- @hiepht: **Symptom** — user on v0.3.20 confirmed `ConnectTelegram` in the
+  picker; tool failed with `U_MISSING_CONFIG / channel_runtime_bridge_required`
+  even with token + allowlist configured in the vault. v0.3.20 fixed
+  TelegramStatus (read); ConnectTelegram (write) was still broken.
+- @hiepht: **Root cause** — SPEC-833 moved the tools layer onto the
+  `ChannelService` port (`src/core/channelPorts.ts`). The port's
+  `startTelegram(wsId)` signature had only ONE argument. The full runtime
+  start path (`src/channels/runtime.ts:260` — `startTelegram(opts:
+  StartTelegramOptions)`) needs provider/model/registry/gate/cwd. The REPL
+  wired these via `setTelegramRuntimeBridge(...)` (SPEC-808 composition), but
+  the tool-side bridge payload never crossed the port boundary — the port
+  impl threw `channel_runtime_bridge_required` on any not-running state.
+  So only the idempotent already-running short-circuit worked; a fresh
+  `ConnectTelegram` could never start the adapter.
+- @hiepht: **Fix — widen port with opaque deps bag (Option A)** — the
+  cleanest delta: `ChannelService.startTelegram(wsId, deps?: unknown)`.
+  `unknown` keeps `src/core/` layer-pure (no edge to `src/tools/` or
+  `src/permissions/`; SPEC-833 eslint still green). Tools pass
+  `runtimeBridge(ctx)` as the opaque second arg; the runtime impl casts
+  back to `Omit<StartTelegramOptions, 'wsId'>` and delegates to
+  `runtime.startTelegram({ wsId, ...deps })`.
+- @hiepht: **Why not Option B (punt to `nimbus telegram connect` verb)** —
+  breaks the agent's action surface. `ConnectTelegram` is an AGENT tool
+  (SPEC-808 T3); forcing users to switch terminals for a connection flow
+  diverges from the Slack/Discord adapters landing in v0.2 and regresses
+  the v0.3 "agent-driven channel lifecycle" UX promise.
+- @hiepht: **Why not Option C (daemon IPC)** — requires the v0.4 daemon
+  (`nimbus daemon`) which has specs but no impl yet (META-011 / SPEC-840+
+  are drafts).
+- @hiepht: **Why not a typed port** — would require
+  `src/core/channelPorts.ts` to import `Provider` (ir/), `Gate`
+  (permissions/), `ToolRegistry` (tools/). The tools import would violate
+  `import/no-restricted-paths` rule `core→tools`. `unknown` at the port
+  boundary + structural cast inside the runtime is the minimum-surface
+  contract.
+- @hiepht: **Security** — HARD RULE §10 compliant. No new vault/passphrase
+  write path. `runtime.startTelegram()` reads `getTelegramBotToken` +
+  `getAllowedUserIds` from vault; fails fast with `U_MISSING_CONFIG`
+  (`reason: 'telegram_bot_token_missing'` / `'telegram_allowlist_empty'`)
+  when either is missing. Hint string steers the user to
+  `nimbus telegram set-token` / `nimbus telegram allow`.
+- @hiepht: **Tests** — `tests/tools/telegram.test.ts` gains 3 regression
+  tests: (a) deps arrive at port as second arg, (b) already-running
+  short-circuit still works without deps (idempotent), (c) missing
+  bridge surfaces the typed `channel_runtime_not_wired` tool-layer error
+  (not the generic port fallback). Test (c) explicitly asserts the
+  `channel_runtime_bridge_required` reason does NOT leak to users.
+
 ## 2026-04-17 — v0.3.20-alpha SPEC-309: eager ChannelRuntime wiring (fix TelegramStatus "channel service not available")
 
 - @hiepht: **Symptom** — user on v0.3.19-alpha confirmed tool `TelegramStatus`
