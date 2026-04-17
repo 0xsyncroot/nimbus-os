@@ -1,11 +1,12 @@
 ---
 id: SPEC-852
 title: inline-error-dialog — Ink ErrorDialog replaces raw JSON errors
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
+implemented: 2026-04-17
 release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840, META-012]

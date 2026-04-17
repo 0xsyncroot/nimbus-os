@@ -44,6 +44,9 @@ export const TOPICS = Object.freeze({
   tools: {
     todoUpdate: 'tools.todoUpdate',
   },
+  ui: {
+    error: 'ui.error',
+  },
 } as const);
 
 export type SessionEvent =
@@ -125,6 +128,13 @@ export type TodoUpdateEvent = {
   ts: number;
 };
 
+/** SPEC-852: ui.error event — emitted by render.ts / slashCommands.ts; consumed by Ink REPL (SPEC-851). */
+export type UiErrorEvent = {
+  type: 'ui.error';
+  error: import('../observability/errors.ts').NimbusError;
+  ts: number;
+};
+
 /** SPEC-133: plan mode events — emitted by ExitPlanMode tool. */
 export type PlanProposedEvent = {
   type: 'plan.proposed';
@@ -167,6 +177,7 @@ const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.plan.proposed,
   TOPICS.plan.decision,
   TOPICS.tools.todoUpdate,
+  TOPICS.ui.error,
 ]);
 
 export function isRegisteredTopic(topic: string): boolean {

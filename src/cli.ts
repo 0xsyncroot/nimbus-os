@@ -5,6 +5,7 @@
 import { NimbusError } from './observability/errors.ts';
 import { logger } from './observability/logger.ts';
 import { printError } from './observability/errorFormat.ts';
+import { t, initI18n } from './i18n/format.ts';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -283,22 +284,9 @@ async function main(): Promise<number> {
 }
 
 function printHelp(): void {
-  process.stdout.write(`nimbus — AI OS cá nhân
-
-  Cách dùng:
-    nimbus                  chat với nimbus (mặc định)
-    nimbus init             thiết lập lần đầu
-    nimbus key              thêm / đổi API key
-    nimbus backup           sao lưu workspace
-    nimbus cost             xem chi phí hôm nay
-    nimbus check            kiểm tra hệ thống
-    nimbus telegram         kết nối Telegram
-
-  Trong REPL: gõ /help để xem slash commands
-
-  Lệnh nâng cao:  nimbus debug         xem thêm: nimbus debug --help
-  Phiên bản:      nimbus --version
-`);
+  // Detect locale from env before any workspace is loaded
+  initI18n();
+  process.stdout.write(`${t('cli.help.title')}\n\n  ${t('cli.help.usage')}\n${t('cli.help.cmd.default')}\n${t('cli.help.cmd.init')}\n${t('cli.help.cmd.key')}\n${t('cli.help.cmd.backup')}\n${t('cli.help.cmd.cost')}\n${t('cli.help.cmd.check')}\n${t('cli.help.cmd.telegram')}\n\n  ${t('cli.help.slash_hint')}\n\n  ${t('cli.help.advanced')}\n  ${t('cli.help.version')}\n`);
 }
 
 const globalVerbose = args.includes('--verbose') || args.includes('-V');

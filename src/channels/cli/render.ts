@@ -4,6 +4,7 @@
 //         plan_announce / spec_announce are suppressed from stdout (INTERNAL_PLAN block handles
 //         model context; user doesn't need the pre-announcement echo).
 // v0.3.2 (SPEC-826): friendly tool-event labels (VN/EN) + verbose escape hatch.
+// v0.4.0 (SPEC-852): mid-turn errors emit 'ui.error' bus event; no raw JSON dump.
 
 import type { LoopOutput } from '../../core/turn.ts';
 import { logger } from '../../observability/logger.ts';
@@ -12,6 +13,9 @@ import { hasMarkdownSyntax, renderMarkdown } from './markdownRender.ts';
 import { detectLocale, humanizeToolInvocation } from './toolLabels.ts';
 import type { Locale } from './toolLabels.ts';
 import { formatToolError } from './errorFormatCli.ts';
+import { getGlobalBus } from '../../core/events.ts';
+import { TOPICS } from '../../core/eventTypes.ts';
+import { NimbusError, ErrorCode } from '../../observability/errors.ts';
 
 export interface RendererOutput {
   write(s: string): void;
@@ -154,9 +158,20 @@ export function createRenderer(
         if (loopOutput.metric.outcome === 'cancelled') {
           output.write(`${colors.warn(prefixes.warn)} turn cancelled\n`);
         } else if (loopOutput.metric.outcome === 'error') {
-          output.write(
-            `${colors.err(prefixes.err)} turn failed: ${loopOutput.metric.errorCode ?? 'unknown'}\n`,
+          // SPEC-852: emit bus event for Ink REPL (SPEC-851 wires subscription).
+          // Plain-text fallback replaces raw JSON dump.
+          const errCode = (loopOutput.metric.errorCode ?? 'unknown') as string;
+          const nimbusErr = new NimbusError(
+            (errCode in ErrorCode ? errCode : 'T_CRASH') as ErrorCode,
+            {},
           );
+          getGlobalBus().publish(TOPICS.ui.error, {
+            type: TOPICS.ui.error,
+            error: nimbusErr,
+            ts: Date.now(),
+          });
+          const friendly = formatToolError({ code: errCode, context: {} }, locale);
+          output.write(`${colors.err(prefixes.err)} ${friendly}\n`);
         }
         break;
     }

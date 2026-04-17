@@ -1,7 +1,9 @@
 // errorFormat.ts — SPEC-901 v0.2.1: human-readable error messages for user-facing CLI output.
+// SPEC-854: U_UI_BUSY, U_UI_CANCELLED, P_KEYBIND_RESERVED, P_OPERATION_DENIED routed through t().
 // Raw JSON context is demoted to logger.debug (visible with --verbose / NIMBUS_LOG_LEVEL=debug).
 
 import { ErrorCode, NimbusError } from './errors.ts';
+import { t } from '../i18n/format.ts';
 
 export interface FormattedError {
   summary: string;
@@ -134,32 +136,27 @@ export function formatError(err: NimbusError): FormattedError {
 
     case ErrorCode.U_UI_BUSY:
       return {
-        summary: 'UI is busy.',
-        // VI: "Giao diện đang bận."
+        summary: t('error.ui_busy'),
         action: 'Wait for the current operation to complete.',
-        // VI hint: "Vui lòng chờ thao tác hiện tại hoàn thành."
       };
 
     case ErrorCode.U_UI_CANCELLED:
       return {
-        summary: 'Action cancelled.',
-        // VI: "Đã huỷ."
+        summary: t('error.ui_cancelled'),
         action: '',
       };
 
     case ErrorCode.P_KEYBIND_RESERVED: {
       const key = typeof err.context['key'] === 'string' ? (err.context['key'] as string) : 'that key';
       return {
-        summary: 'That shortcut is reserved.',
-        // VI: "Phím tắt này được giữ cố định."
+        summary: t('error.keybind_reserved'),
         action: `The key "${key}" is reserved by nimbus. Choose a different binding.`,
       };
     }
 
     case ErrorCode.P_OPERATION_DENIED:
       return {
-        summary: 'Operation not allowed.',
-        // VI: "Thao tác không được phép."
+        summary: t('error.operation_denied'),
         action:
           typeof err.context['reason'] === 'string'
             ? (err.context['reason'] as string)
@@ -186,9 +183,124 @@ export function formatError(err: NimbusError): FormattedError {
       };
     }
 
+    case ErrorCode.T_VALIDATION:
+      return {
+        summary: 'Input looks malformed — the tool received an unexpected format.',
+        action: 'Check the argument spelling or run /doctor.',
+      };
+
+    case ErrorCode.T_TIMEOUT:
+      return {
+        summary: 'The operation timed out.',
+        action: 'Try again, or increase the timeout if supported.',
+      };
+
+    case ErrorCode.T_CRASH:
+      return {
+        summary: 'A tool crashed unexpectedly.',
+        action: 'Run with --verbose to see the stack trace.',
+      };
+
+    case ErrorCode.T_MCP_UNAVAILABLE:
+      return {
+        summary: 'An MCP tool is unavailable.',
+        action: 'Check that the MCP server is running and configured correctly.',
+      };
+
+    case ErrorCode.T_ITERATION_CAP:
+      return {
+        summary: 'The agent hit its iteration limit.',
+        action: 'Break the task into smaller steps or increase the iteration cap.',
+      };
+
+    case ErrorCode.T_RESOURCE_LIMIT:
+      return {
+        summary: 'A resource limit was exceeded.',
+        action: 'Free up disk space or memory and try again.',
+      };
+
+    case ErrorCode.Y_OOM:
+      return {
+        summary: 'Out of memory.',
+        action: 'Free up memory and restart. Run `nimbus doctor` to diagnose.',
+      };
+
+    case ErrorCode.Y_DISK_FULL:
+      return {
+        summary: 'Disk is full.',
+        action: 'Free up disk space and retry. Run `nimbus doctor` to diagnose.',
+      };
+
+    case ErrorCode.Y_SUBAGENT_CRASH:
+    case ErrorCode.Y_DAEMON_CRASH:
+      return {
+        summary: 'A background process crashed.',
+        action: 'Run `nimbus doctor` to diagnose the environment.',
+      };
+
+    case ErrorCode.Y_CIRCUIT_BREAKER_OPEN:
+      return {
+        summary: 'Too many failures — circuit breaker open.',
+        action: 'Wait a moment, then retry. Run `nimbus doctor` if the issue persists.',
+      };
+
+    case ErrorCode.X_INJECTION:
+      return {
+        summary: 'Potential prompt injection detected.',
+        action: 'Review the input and adjust your safety settings.',
+      };
+
+    case ErrorCode.X_NETWORK_BLOCKED:
+      return {
+        summary: 'Network access blocked by safety rules.',
+        action: 'Review your network allow-list in workspace settings.',
+      };
+
+    case ErrorCode.X_AUDIT_BREAK:
+      return {
+        summary: 'Audit integrity check failed.',
+        action: 'Run `nimbus doctor` — this may indicate a security issue.',
+      };
+
+    case ErrorCode.S_COMPACT_FAIL:
+      return {
+        summary: 'Failed to compact the conversation.',
+        action: 'Start a new session. Run with --verbose to see the error.',
+      };
+
+    case ErrorCode.S_STORAGE_CORRUPT:
+      return {
+        summary: 'Session storage appears corrupted.',
+        action: 'Run `nimbus doctor` to repair storage.',
+      };
+
+    case ErrorCode.S_SOUL_PARSE:
+      return {
+        summary: 'Failed to parse SOUL.md.',
+        action: 'Check SOUL.md for syntax errors.',
+      };
+
+    case ErrorCode.S_MEMORY_CONFLICT:
+      return {
+        summary: 'MEMORY.md has a conflict.',
+        action: 'Resolve the conflict in MEMORY.md and restart.',
+      };
+
+    case ErrorCode.S_SCHEMA_MISMATCH:
+      return {
+        summary: 'Stored data schema mismatch — workspace may need migration.',
+        action: 'Run `nimbus init --migrate` or contact support.',
+      };
+
+    case ErrorCode.P_INVALID_REQUEST:
+      return {
+        summary: 'The provider rejected the request as invalid.',
+        action: 'Check the request parameters. Run with --verbose for details.',
+      };
+
     default:
       return {
-        summary: err.message,
+        summary: `Error: ${err.code}`,
         action: 'Run with --verbose for details.',
       };
   }

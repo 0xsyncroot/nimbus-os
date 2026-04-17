@@ -8,6 +8,7 @@ import { nimbusHome } from '../../platform/paths.ts';
 import { detect } from '../../platform/detect.ts';
 import { diagnoseVault } from '../../platform/secrets/diagnose.ts';
 import { getActiveWorkspace } from '../../core/workspace.ts';
+import { t } from '../../i18n/format.ts';
 
 const VAULT_KEY_FILENAME = '.vault-key';
 const CURRENT_VERSION = '0.3.21-alpha';
@@ -39,7 +40,7 @@ function printTable(rows: CheckRow[]): void {
   const valueW = Math.max(...rows.map((r) => r.value.length)) + 2;
   const sep = '-'.repeat(labelW + valueW + 8);
 
-  process.stdout.write(`nimbus doctor ${CURRENT_VERSION}\n`);
+  process.stdout.write(`${t('doctor.header', { version: CURRENT_VERSION })}\n`);
   process.stdout.write(`${sep}\n`);
   for (const r of rows) {
     const icon = statusIcon(r.status);
@@ -83,7 +84,7 @@ export async function runDoctor(): Promise<number> {
       const svStr = `v${String(sv)} (current)`;
       rows.push(row('Schema version', svStr, 'ok'));
     } else {
-      rows.push(row('Workspace', 'none', 'warn', 'No workspace found', 'nimbus init'));
+      rows.push(row('Workspace', 'none', 'warn', t('doctor.no_workspace'), t('doctor.workspace_fix')));
       rows.push(row('Schema version', 'N/A', 'warn'));
     }
   } catch (err) {
@@ -94,20 +95,20 @@ export async function runDoctor(): Promise<number> {
   // Vault file + decrypt
   const vaultStatus = await diagnoseVault();
   if (vaultStatus.ok) {
-    rows.push(row('Vault file', 'present', 'ok'));
-    rows.push(row('Vault decrypt', 'ok', 'ok'));
+    rows.push(row('Vault file', t('doctor.vault_present'), 'ok'));
+    rows.push(row('Vault decrypt', t('doctor.vault_ok'), 'ok'));
   } else if (vaultStatus.reason === 'missing_file') {
-    rows.push(row('Vault file', 'absent', 'warn', 'No secrets stored yet'));
+    rows.push(row('Vault file', t('doctor.vault_missing'), 'warn', 'No secrets stored yet'));
     rows.push(row('Vault decrypt', 'N/A', 'warn'));
   } else if (vaultStatus.reason === 'missing_passphrase') {
-    rows.push(row('Vault file', 'present', 'ok'));
-    rows.push(row('Vault decrypt', 'FAIL', 'fail', 'passphrase not found', 'nimbus vault reset'));
+    rows.push(row('Vault file', t('doctor.vault_present'), 'ok'));
+    rows.push(row('Vault decrypt', t('doctor.vault_fail'), 'fail', 'passphrase not found', 'nimbus vault reset'));
   } else if (vaultStatus.reason === 'decrypt_failed') {
-    rows.push(row('Vault file', 'present', 'ok'));
-    rows.push(row('Vault decrypt', 'FAIL', 'fail', 'likely v0.2.1 → v0.2.2 upgrade', 'nimbus vault reset   (re-enters keys inline)'));
+    rows.push(row('Vault file', t('doctor.vault_present'), 'ok'));
+    rows.push(row('Vault decrypt', t('doctor.vault_fail'), 'fail', 'likely v0.2.1 → v0.2.2 upgrade', 'nimbus vault reset   (re-enters keys inline)'));
   } else {
-    rows.push(row('Vault file', 'present', 'ok'));
-    rows.push(row('Vault decrypt', 'FAIL', 'fail', vaultStatus.reason, 'nimbus vault reset'));
+    rows.push(row('Vault file', t('doctor.vault_present'), 'ok'));
+    rows.push(row('Vault decrypt', t('doctor.vault_fail'), 'fail', vaultStatus.reason, 'nimbus vault reset'));
   }
 
   // .vault-key permissions (Unix only)
@@ -132,7 +133,7 @@ export async function runDoctor(): Promise<number> {
 
   const issues = rows.filter((r) => r.status !== 'ok');
   if (issues.length === 0) {
-    process.stdout.write('\nAll systems OK.\n');
+    process.stdout.write(`\n${t('doctor.all_ok')}\n`);
     return 0;
   }
 

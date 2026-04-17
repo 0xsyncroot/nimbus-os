@@ -1,8 +1,8 @@
 ---
 id: SPEC-854
 title: locale-policy — all user strings through t(key, locale)
-status: draft
-version: 0.1.0
+status: approved
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
@@ -13,9 +13,14 @@ blocks: []
 estimated_loc: 100
 files_touched:
   - src/i18n/locale.ts
-  - src/i18n/messages/en.ts
-  - src/i18n/messages/vi.ts
+  - src/i18n/format.ts
+  - src/i18n/en.json
+  - src/i18n/vi.json
   - src/channels/cli/slashCommands.ts
+  - src/cli.ts
+  - src/cli/commands/check.ts
+  - src/cli/debug/doctor.ts
+  - src/observability/errorFormat.ts
   - tests/i18n/locale.test.ts
 ---
 
@@ -142,3 +147,4 @@ export function tLocale(key: string, locale: Locale, vars?: Record<string, strin
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created (Phase 3 gap — gap audit 1.2/1.23 flagged EN/VI mixing in help + check output; no spec governed i18n routing)
+- 2026-04-17 developer-locale: implemented — setLocale()/tLocale() added to locale.ts/format.ts; 36 new keys in en.json/vi.json; check.ts/doctor.ts/cli.ts/errorFormat.ts routed through t(); /locale slash command added; 31-test suite green

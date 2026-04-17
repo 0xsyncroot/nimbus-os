@@ -1,4 +1,4 @@
-// locale.ts — SPEC-180: locale detection + singleton.
+// locale.ts — SPEC-180 + SPEC-854: locale detection + singleton + session override.
 
 export type Locale = 'en' | 'vi';
 
@@ -63,4 +63,14 @@ export function currentLocale(): Locale {
 /** Reset the cached locale (used in tests). */
 export function __resetLocaleCache(): void {
   _cached = null;
+}
+
+// ── SPEC-854 extensions ────────────────────────────────────────────────────
+
+/**
+ * SPEC-854: Session-scoped locale override (in-memory only; resets on restart).
+ * Used by the /locale slash command. Alias for setCurrentLocale.
+ */
+export function setLocale(locale: Locale): void {
+  _cached = locale;
 }

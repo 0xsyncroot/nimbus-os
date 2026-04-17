@@ -1,11 +1,17 @@
 // slashCommands.ts — SPEC-801 T3 + SPEC-822 T1: slash command registry + dispatcher.
+// SPEC-852: slash command errors emit 'ui.error' bus event + plain-text fallback (no raw JSON).
 
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
+import { formatError } from '../../observability/errorFormat.ts';
+import { getGlobalBus } from '../../core/events.ts';
+import { TOPICS } from '../../core/eventTypes.ts';
 import {
   parseThinkingArg,
   ThinkingParseError,
   type EffortLevel,
 } from '../../providers/reasoningResolver.ts';
+import { setLocale, type Locale } from '../../i18n/locale.ts';
+import { t } from '../../i18n/format.ts';
 
 export interface ReplContext {
   wsId: string;
@@ -83,7 +89,16 @@ export async function dispatchSlash(line: string, ctx: ReplContext): Promise<boo
     await cmd.handler(parsed.args, ctx);
   } catch (err) {
     if (err instanceof NimbusError) {
-      ctx.write(`[ERROR] ${err.code}: ${JSON.stringify(err.context)}`);
+      // SPEC-852: emit bus event for Ink REPL (SPEC-851 wires subscription).
+      // Plain-text fallback for legacy readline path — no raw JSON dump.
+      getGlobalBus().publish(TOPICS.ui.error, {
+        type: TOPICS.ui.error,
+        error: err,
+        ts: Date.now(),
+      });
+      const { summary, action } = formatError(err);
+      const hint = showDoctorHintCode(err.code) ? '\n     Try: run nimbus doctor.' : '';
+      ctx.write(`\u26A0  ${err.code} \u2014 ${summary}${action ? `\n     ${action}` : ''}${hint}`);
     } else {
       ctx.write(`[ERROR] ${(err as Error).message}`);
     }
@@ -93,6 +108,11 @@ export async function dispatchSlash(line: string, ctx: ReplContext): Promise<boo
 
 export function __resetRegistry(): void {
   registry.clear();
+}
+
+/** Returns true for system (Y_*) and security (X_*) error codes — surface "run nimbus doctor" hint. */
+function showDoctorHintCode(code: string): boolean {
+  return code.startsWith('X_') || code.startsWith('Y_');
 }
 
 export function registerDefaultCommands(): void {
@@ -306,6 +326,28 @@ export function registerDefaultCommands(): void {
       }
       ctx.setSpecConfirm?.(v);
       ctx.write(`spec-confirm set to ${v}`);
+    },
+  });
+  // SPEC-854 — session-scoped locale override
+  registerSlash({
+    name: 'locale',
+    description: 'Get/set session locale (en|vi)',
+    usage: '/locale [en|vi]',
+    category: 'system',
+    argHint: '[en|vi]',
+    argChoices: ['en', 'vi'],
+    handler: (args, ctx) => {
+      const raw = args.trim();
+      if (raw === '') {
+        ctx.write(t('locale.current', { locale: 'en' }));
+        return;
+      }
+      if (raw !== 'en' && raw !== 'vi') {
+        ctx.write(t('locale.invalid'));
+        return;
+      }
+      setLocale(raw as Locale);
+      ctx.write(t('locale.set', { locale: raw }));
     },
   });
 }

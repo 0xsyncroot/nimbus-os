@@ -90,6 +90,27 @@ export function t(key: string, params?: Record<string, string | number>): string
   return key;
 }
 
+/**
+ * SPEC-854: Translate a key with an explicit locale (bypasses singleton).
+ * Useful for tests and pre-session use where the singleton isn't set.
+ * Fallback chain: locale → en → key.
+ */
+export function tLocale(key: string, locale: Locale, params?: Record<string, string | number>): string {
+  if (locale !== 'en') {
+    const bundle = loadBundle(locale);
+    const msg = bundle.messages.get(key);
+    if (msg !== undefined) {
+      return params ? interpolate(msg, params) : msg;
+    }
+  }
+  const enBundle = loadBundle('en');
+  const enMsg = enBundle.messages.get(key);
+  if (enMsg !== undefined) {
+    return params ? interpolate(enMsg, params) : enMsg;
+  }
+  return key;
+}
+
 // ── initI18n ───────────────────────────────────────────────────────────────
 
 /**

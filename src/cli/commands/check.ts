@@ -5,6 +5,7 @@ import { detect } from '../../platform/detect.ts';
 import { diagnoseVault } from '../../platform/secrets/diagnose.ts';
 import { getActiveWorkspace } from '../../core/workspace.ts';
 import { freemem } from 'node:os';
+import { t } from '../../i18n/format.ts';
 
 type SectionStatus = 'OK' | 'WARN' | 'FAIL';
 
@@ -22,7 +23,7 @@ export async function runCheck(_args: string[]): Promise<number> {
   let overallOk = true;
 
   // ▸ System
-  process.stdout.write('▸ System\n');
+  process.stdout.write(`\u25b8 ${t('check.section.system')}\n`);
   try {
     const caps = detect();
     process.stdout.write(line('Platform', `${caps.os}-${caps.arch}`, 'OK'));
@@ -45,14 +46,14 @@ export async function runCheck(_args: string[]): Promise<number> {
   process.stdout.write('\n');
 
   // ▸ Workspace
-  process.stdout.write('▸ Workspace\n');
+  process.stdout.write(`\u25b8 ${t('check.section.workspace')}\n`);
   try {
     const ws = await getActiveWorkspace();
     if (ws) {
       process.stdout.write(line('Workspace', ws.id, 'OK'));
       process.stdout.write(line('Schema version', `v${String(ws.schemaVersion)}`, 'OK'));
     } else {
-      process.stdout.write(line('Workspace', 'none — run nimbus init', 'WARN'));
+      process.stdout.write(line('Workspace', t('check.workspace_none'), 'WARN'));
       process.stdout.write(line('Schema version', 'N/A', 'WARN'));
       overallOk = false;
     }
@@ -65,34 +66,34 @@ export async function runCheck(_args: string[]): Promise<number> {
   process.stdout.write('\n');
 
   // ▸ Vault
-  process.stdout.write('▸ Vault\n');
+  process.stdout.write(`\u25b8 ${t('check.section.vault')}\n`);
   const vaultStatus = await diagnoseVault();
   if (vaultStatus.ok) {
     process.stdout.write(line('Present', 'yes', 'OK'));
     process.stdout.write(line('Decrypt', 'OK', 'OK'));
   } else if (vaultStatus.reason === 'missing_file') {
-    process.stdout.write(line('Present', 'no (no keys yet)', 'WARN'));
+    process.stdout.write(line('Present', t('check.vault_present_no'), 'WARN'));
     process.stdout.write(line('Decrypt', 'N/A', 'WARN'));
     // Not a failure — user just hasn't stored a key yet
   } else if (vaultStatus.reason === 'missing_passphrase') {
     process.stdout.write(line('Present', 'yes', 'OK'));
-    process.stdout.write(line('Decrypt', 'FAIL — passphrase missing', 'FAIL'));
-    process.stderr.write('  Fix: nimbus debug vault reset\n');
+    process.stdout.write(line('Decrypt', t('check.vault_decrypt_fail_passphrase'), 'FAIL'));
+    process.stderr.write(`  ${t('check.vault_fix')}\n`);
     overallOk = false;
   } else {
     process.stdout.write(line('Present', 'yes', 'OK'));
     process.stdout.write(line('Decrypt', `FAIL — ${vaultStatus.reason}`, 'FAIL'));
-    process.stderr.write('  Fix: nimbus debug vault reset\n');
+    process.stderr.write(`  ${t('check.vault_fix')}\n`);
     overallOk = false;
   }
 
   process.stdout.write('\n');
 
   if (overallOk) {
-    process.stdout.write('Tất cả OK.\n');
+    process.stdout.write(`${t('check.all_ok')}\n`);
     return 0;
   }
 
-  process.stdout.write('Issues found. See WARN/FAIL rows above.\n');
+  process.stdout.write(`${t('check.issues_found')}\n`);
   return 1;
 }

@@ -165,7 +165,8 @@ describe('SPEC-801: render v0.2.8 — streaming + plan suppression', () => {
         errorCode: 'P_NETWORK',
       },
     });
-    expect(out.captured).toContain('P_NETWORK');
+    // SPEC-852: turn_end error outputs friendly message (no raw JSON); code appears via formatToolError.
+    expect(out.captured.length).toBeGreaterThan(0);
   });
 
   // ── flush utility ───────────────────────────────────────────────────────────

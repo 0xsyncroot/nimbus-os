@@ -115,11 +115,12 @@ describe('SPEC-901 v0.2.1: formatError', () => {
     expect(action).toContain('--force');
   });
 
-  test('unknown code falls back to message + verbose hint', () => {
+  test('known code Y_OOM returns non-empty summary and action', () => {
+    // SPEC-852: Y_OOM now has an explicit mapping; fallback path still covered by default branch.
     const err = new NimbusError(ErrorCode.Y_OOM, {});
     const { summary, action } = formatError(err);
     expect(summary).toBeTruthy();
-    expect(action).toContain('--verbose');
+    expect(action).toBeTruthy();
   });
 
   test('formatError returns exactly {summary, action} shape', () => {
