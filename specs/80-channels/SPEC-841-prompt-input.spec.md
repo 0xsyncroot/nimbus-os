@@ -1,7 +1,7 @@
 ---
 id: SPEC-841
 title: Multi-line PromptInput with paste preservation
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17

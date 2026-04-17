@@ -41,6 +41,9 @@ export const TOPICS = Object.freeze({
     proposed: 'plan.proposed',
     decision: 'plan.decision',
   },
+  tools: {
+    todoUpdate: 'tools.todoUpdate',
+  },
 } as const);
 
 export type SessionEvent =
@@ -108,6 +111,20 @@ export type ShellEvent =
   | { type: 'shell.exit'; taskId: string; exitCode: number; ts: number }
   | { type: 'shell.buffer_overflow'; taskId: string; droppedLines: number };
 
+/** SPEC-848: TodoUpdate event — emitted when agent writes task list. */
+export type TodoUpdateEvent = {
+  type: 'tools.todoUpdate';
+  tasks: Array<{
+    id: string;
+    title: string;
+    status: 'pending' | 'in_progress' | 'done';
+    owner?: string;
+    blockedBy?: string[];
+    completedAt?: number;
+  }>;
+  ts: number;
+};
+
 /** SPEC-133: plan mode events — emitted by ExitPlanMode tool. */
 export type PlanProposedEvent = {
   type: 'plan.proposed';
@@ -149,6 +166,7 @@ const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.shell.bufferOverflow,
   TOPICS.plan.proposed,
   TOPICS.plan.decision,
+  TOPICS.tools.todoUpdate,
 ]);
 
 export function isRegisteredTopic(topic: string): boolean {

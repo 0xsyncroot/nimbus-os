@@ -1,11 +1,11 @@
 ---
 id: SPEC-848
 title: StatusLine, PromptInputFooter, and TaskListV2 components
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-04-18
 release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840]
