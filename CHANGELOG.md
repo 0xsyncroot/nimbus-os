@@ -4,6 +4,42 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.19-alpha] — 2026-04-17 — URGENT fix (Enter on "Yes" was silently rendered as "denied" for schema-less confirm tools)
+
+User repro on v0.3.18 binary:
+```
+⋯ using tool: TelegramStatus
+Allow tool: TelegramStatus? — ↑↓ navigate, Enter select
+> Yes
+✗ You denied this action.
+```
+
+**This was NOT a v0.3.18 regression** — the bug has existed since v0.3.4 but was never triggered because every QA path so far used tools with a `path` / `cmd` / `url` / `query` input (Write, Edit, Bash, WebFetch). TelegramStatus is the first schema-less (`z.object({}).strict()`) confirm-gated tool users actually hit.
+
+### Root cause
+
+`askCacheKey()` in `src/permissions/gate.ts:245` returned `null` when the invocation had no matchable input field, while its sibling `askRuleKey()` in `src/tools/loopAdapter.ts:41` fell back to `inv.name`. Consequence: when the user clicked "Yes", `rememberAllow` wrote key `"TelegramStatus"` into the cache, but the NEXT `decideByMode()` call short-circuited on `key && cache.allows.has(key)` — the `key` was null, so the cache lookup never ran. The tool invocation re-hit `'ask'` → loopAdapter returned fresh `needs_confirm` → renderer mapped to `T_PERMISSION` → `render.ts:146` passes empty `context` to `formatToolError` → generic "You denied this action." message.
+
+**User's Enter press was ALWAYS registered as allow**. The picker was correct. The cache was correct. The renderer was wrong. Nothing visible to the user matched what actually happened.
+
+### Affected tools
+
+Any tool with an empty-object Zod schema in v0.1–v0.3: `TelegramStatus`, `ConnectTelegram`, `DisconnectTelegram`, `TodoWrite`, `ExitPlanMode`, `EnterPlanMode`. All exhibited the same ghost-deny pattern when invoked under `askAlways` or `default` mode.
+
+### Fix (`v0.3.19`)
+
+- `src/permissions/gate.ts` — `askCacheKey` now mirrors `askRuleKey` exactly: `target !== null ? \`${inv.name}:${target}\` : inv.name`. Never returns null. Two call sites in `decideByMode` simplified (no null guard).
+- `tests/tools/loopAdapter.test.ts` — regression test: TelegramStatus-shaped tool with `onAsk='allow'` asserts handler ran AND `res.ok === true`. Fails pre-fix with `handlerCalls === 0`, passes post-fix.
+- `tests/channels/cli/ui/cliHost.test.ts` — locks the `UIResult.value === 'allow'` contract for the CLI path end-to-end.
+
+### Not fixed here (tracked for v0.3.20+)
+
+The cosmetic renderer bug — `render.ts:146` passes `context: {}` to `formatToolError`, so the `user_denied` branch never fires even when the user really DOES deny. The message always falls through to the generic "You denied this action." sentence. Separate from the cache bug; shows up regardless of the user's actual choice. Will be fixed in a follow-up SPEC once we land the v0.4 Ink refactor (see research note below).
+
+### Deferred decision — Ink port for v0.4
+
+The v0.3.18 "Option X" synthesis claimed Ink "would not solve the stdin-ownership bug". A fresh 4th read of Claude Code's source (`/root/develop/nimbus-cli/src/ink/`, `src/components/CustomSelect/`, `src/hooks/useCanUseTool.tsx`) contradicts that: Claude solves dual-owner stdin via a single `internal_eventEmitter` pipeline where raw mode stays on across subtree transitions and React routes subscription. The drain+priming hack in `onboard/picker.ts` is a patch for a structural problem that a framework with single-owner stdin does not have. The v0.3.10–15 regressions were all this class of bug. Recommendation: port to stock Ink (NOT the Claude Code fork) in v0.4 — ~1200-1800 LoC net, -500 after deleting drain/priming. Tracked as a new SPEC; not blocking for v0.3.19 since this release fixes the user-facing ghost-deny.
+
 ## [0.3.18-alpha] — 2026-04-17 — UI refactor Option X (multi-channel UIHost, no Ink) + 3 CI fixes
 
 **Why**: v0.3.10–15 shipped 5 consecutive picker regressions from stdin-byte-bleed between autocomplete and confirm. 4-Opus-expert research concluded: keep the v0.3.15 drain+priming picker, but lift UI behind a channel-agnostic `UIHost` port so Telegram/web/Slack can attach the same intent contract without each re-implementing inline buttons. Rejected a full Ink port (~4500 LoC + 15 npm deps, would not solve the stdin-ownership bug). Total change: ~800 LoC across 4 specs, 0 Ink, 0 new deps.
