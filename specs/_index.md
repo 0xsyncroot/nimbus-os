@@ -273,7 +273,7 @@
 |----|-------|--------|------|---------|
 | SPEC-153 | Vault atomic-write + timestamped backup rotation | draft | SPEC-152, META-009 | 50 |
 
-## v0.4 Feature Specs (16 total)
+## v0.4 Feature Specs (17 total)
 
 ### channels
 
@@ -287,6 +287,7 @@
 | SPEC-845 | Collapsed Read/Search coalescing and background task progress | draft | META-011, SPEC-843 | 150 |
 | SPEC-846 | PermissionDialog and per-tool request components | draft | META-011, SPEC-840, SPEC-830 | 350 |
 | SPEC-847 | Modal panels with alt-screen takeover for 8 slash commands | draft | META-011, SPEC-840, SPEC-849 | 350 |
+| SPEC-848 | StatusLine, PromptInputFooter, and TaskListV2 components | draft | META-011, SPEC-840 | 300 |
 | SPEC-849 | Meta-UX helpers and keybinding manager | draft | META-009, META-011, SPEC-840 | 250 |
 
 ### core
