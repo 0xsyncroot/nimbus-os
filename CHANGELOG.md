@@ -4,6 +4,86 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.4.0-alpha] — 2026-04-17 — FULL UI uplift (Ink + React port, 17 specs, 6 waves)
+
+**Why**: after 6 consecutive picker regressions (v0.3.10–15) from dual-owner stdin, a full 4-Opus research sweep confirmed Claude Code's `internal_eventEmitter` single-stdin pipeline structurally solves the bug class. The prior v0.3.18 "no Ink" synthesis was refuted by re-reading `/root/develop/nimbus-cli/src/ink/`. This release ports stock Ink 7 + `@inkjs/ui` 2 to replace raw readline in every CLI surface.
+
+**Architecture (META-011 umbrella)**:
+- Stock Ink 7 + `@inkjs/ui` 2 + React 19.2 + Yoga (bundled), NOT the Claude Code in-tree fork
+- Single stdin owner via Ink `internal_eventEmitter`; raw mode stays on across subtree transitions
+- Legacy raw-readline path behind `NIMBUS_UI=legacy` for one release
+- 7 pinned perf constants (MAX_STATIC_BLOCKS=500, FRAME_INTERVAL_MS=80, STATUS_DEBOUNCE_MS=300, LARGE_PASTE_THRESHOLD_BYTES=10000, FILE_REF_SCAN_TIMEOUT_MS=200, STALL_THRESHOLD_MS=3000, REDUCED_MOTION_CYCLE_MS=2000)
+
+### 17 specs implemented
+
+**Foundation (3)**:
+- SPEC-840 Ink 7 app + theme (4 palettes) + 7 base components + ink-testing-library
+- SPEC-850 keyPromptCore: non-Ink secure key prompt extracted; `init.ts:99-103` plaintext-echo landmine migrated to PasswordPrompt
+- META-012 UI error codes: `U_UI_BUSY`, `U_UI_CANCELLED`, `P_KEYBIND_RESERVED`, `P_OPERATION_DENIED`
+
+**Input (2)**:
+- SPEC-841 multi-line `PromptInput`: paste preserves newlines, Vietnamese IME via `string-width`, Ctrl-C double-press 1.5s, draft stash, platform keys (alt+v Win, shift+tab mode cycle, meta+m Win fallback), placeholder rotation
+- SPEC-842 slash autocomplete + `/help` overlay: category grouping, Tab accept, `?` synonym, `@file` autocomplete with `SENSITIVE_PATTERNS` deny-list (`.ssh`, `.env`, `secrets.enc`, `*.pem`) + `.nimbusignore` pre-filter
+
+**Output (3)**:
+- SPEC-843 streaming output: cached markdown (LRU 500, Bun.hash), fast-path skip, platform spinner frames (darwin/linux+win/ghostty), stall interp to error red, `ANSI-OSC stripper` on all render paths (META-009 T22 — prevents `\x1b[6n` stdin injection)
+- SPEC-844 StructuredDiff: dashed top+bottom frame, colored gutter, WeakMap hunk cache, narrow fallback
+- SPEC-845 collapsed Read/Grep/Glob + ToolUseLoader mm:ss progress
+
+**Dialogs (2)**:
+- SPEC-846 PermissionDialog + 8 per-tool requests (Bash with prefix-safety reject of `; && ||`, FileEdit embeds StructuredDiff, ExitPlanMode sticky footer), UIIntent.permission extension (SPEC-830)
+- SPEC-847 8 modal panels (`/help /model /cost /memory /doctor /status /export /compact`) with `<AltScreen>` alt-screen takeover, DoctorModal memoization, MemoryModal ANSI strip
+
+**Status + polish (5)**:
+- SPEC-848 StatusLine (model · mode · $today · ctx%, 300ms debounce) + PromptInputFooter + TaskListV2 (figures icons, `min(10,max(3,rows-14))` clamp, 30s TTL)
+- SPEC-849 meta-UX: `useBreakpoints` (<60/<80/<120), `<AltScreen>` with ink#935 guard + try/finally mount-throw, DECSET 2026 sync-output for tmux, typed `KeybindingAction` union (28 actions), 9 contexts + chord policy preserving readline (ctrl+a/e/r/w/k/u immediate)
+- SPEC-851 repl.ts integration — LOAD-BEARING glue: Ink `<App>` composition, dual-path (Ink default, `NIMBUS_UI=legacy` fallback), `createInkUIHost` mounts `<PermissionRequest>` per intent
+- SPEC-852 `<ErrorDialog>` — replaces raw `JSON.stringify(err.context)` dump with friendly Ink dialog; secret masking for *Key/*Token/*Passphrase fields
+- SPEC-853 `<Welcome>` Ink banner (wide/compact/plain variants with 5min freshness)
+- SPEC-854 locale policy: `detectLocale(LANG/LC_ALL)` → en|vi, `t(key, locale, vars)` i18n router, `/locale` slash command, 26 strings routed
+- SPEC-855 Ink onboarding wizard — 7-step flow (Welcome → Provider → Endpoint → Key (PasswordPrompt) → Model → Language → Summary), Esc goes back, Ctrl-C abort + draft preserve
+
+### Security hardening (HARD RULE §10 + META-009)
+
+- **T22 ANSI/OSC injection**: `stripAnsiOsc` applied to all render paths (assistant text, tool results, plan body, MEMORY.md, diff content, @file preview). `\x1b[2J` cannot wipe terminal; `\x1b[6n` (cursor-position report = stdin injection) stripped.
+- **T23 Bash prefix rule injection**: prefix extractor rejects `; && || | \n $( \``; dialog hides "Always" option when prefix ambiguous.
+- **T24 Keybinding action injection**: `KeybindingAction` strict union; unknown strings from `~/.nimbus/keybindings.json` logged + skipped (no eval).
+- **T25 @file sensitive path disclosure**: SENSITIVE_PATTERNS deny-list at autocomplete + submission (`.ssh/`, `.env`, `.envrc`, `*.pem`, `*.key`, `secrets.enc`, `.vault-key`, `.aws/`).
+- **T26 Alt-screen mount-throw**: try/finally around DEC 1049 entry + `process.on('exit')` + SIGINT handlers; DECSET 2026 reset on crash.
+- **B1 plaintext-echo landmine** migrated — `init.ts:99-103` now uses `promptMaskedKey` via SPEC-850 keyPromptCore.
+
+### Supply-chain guards (SPEC-840)
+
+- `bun.lockb` committed; `bun install --frozen-lockfile` in CI.
+- `bun audit --prod` CI step (HIGH/CRITICAL in ink/@inkjs/ui/react/marked/yoga fails build).
+- `@inkjs/ui` 2-year-stale risk: if no release 18 months OR blocking CVE 14 days → vendor widgets to `src/channels/cli/widgets/`.
+- `marked@18` configured safe (`gfm:true, breaks:false, pedantic:false, async:false`) + pre-sanitized input.
+
+### Test metrics
+
+- ~850+ new tests across 17 spec impls
+- Full suite: 2641 passing, 0 failing
+- Coverage: `ink-testing-library` for component snapshots + Bun PTY smoke (`scripts/pty-smoke/ink-repl.ts`) for real-terminal flow
+- Gate B 4-smoke protocol: PTY + Telegram + vault upgrade + 3-OS binary (CD matrix)
+
+### Fixed during v0.4 work
+
+- Ghost-deny on schema-less confirm tools (v0.3.19, SPEC-309+): `askCacheKey` null fallback fixed; Enter on Yes was ALWAYS allow, renderer was mapping T_PERMISSION wrong.
+- TelegramStatus from CLI channel (v0.3.20, SPEC-309): `getChannelRuntime()` eager init at REPL startup.
+- ConnectTelegram bridge through port (v0.3.21, SPEC-311): `ChannelService.startTelegram(wsId, deps)` port widened; tool forwards deps.
+- 8 draft specs with missing sections (validator now tolerant of draft status).
+- Windows SPEC-833 layer test path-separator bug.
+- macOS SPEC-804 HMAC base64url padding-bit malleability (real CSRF hole, not flake).
+
+### Known / deferred
+
+- `src/onboard/picker.ts` NOT deleted (used by shipped SPEC-827/832/901); deletion deferred to v0.5 when legacy path retires.
+- `NIMBUS_UI=legacy` escape hatch retained for v0.4.0; removed v0.4.1.
+- Mouse selection, Kitty keyboard, iTerm2 progress, OSC clipboard, MessageSelector rewind — all deferred to v0.5.
+- Screen-reader ARIA fallback — not provided by Ink; documented limitation.
+- Bridge spinner (Claude Code 4-frame `·|· ·/· ·—· ·\·`) — defer to v0.5 if multi-agent UI needs it.
+- SedEdit + Notebook permission variants — v0.4.1 stubs.
+
 ## [0.3.21-alpha] — 2026-04-17 — SPEC-311 fix ConnectTelegram bridge from CLI channel
 
 User test on v0.3.20 immediately after the SPEC-309 read-path fix landed:

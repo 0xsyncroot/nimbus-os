@@ -11,7 +11,7 @@ import { getActiveWorkspace } from '../../core/workspace.ts';
 import { t } from '../../i18n/format.ts';
 
 const VAULT_KEY_FILENAME = '.vault-key';
-const CURRENT_VERSION = '0.3.21-alpha';
+const CURRENT_VERSION = '0.4.0-alpha';
 
 export interface CheckRow {
   label: string;
