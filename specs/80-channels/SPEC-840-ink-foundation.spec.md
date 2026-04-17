@@ -62,6 +62,10 @@ files_touched:
 - No `any` types. TypeScript strict throughout.
 - `NO_COLOR` env → `chalk.level = 0`; set once at app init, never overridden.
 - Layer rule (SPEC-833): `channels/cli/` must not import `tools/` directly.
+- `bun.lockb` committed. Lockfile is updated only via `bun install`; `bun update` is forbidden in CI and local dev to prevent silent dep drift.
+- CI audit gate: `.github/workflows/ci.yml` includes a `bun audit --prod` step. HIGH or CRITICAL severity findings in `ink`, `@inkjs/ui`, `react`, `marked`, `yoga-wasm-web`, or `react-reconciler` fail the build immediately.
+- `@inkjs/ui` rot trigger: if a blocking bug is unaddressed upstream for 14 days OR the package has had no release within 18 months, vendor the widgets into `src/channels/cli/widgets/` and remove the package dep. Evaluate at each quarterly dep review.
+- npm provenance check: `ink@7` and `@inkjs/ui@2` must present valid npm provenance attestation on install. If provenance is absent or invalid, CI aborts with an explicit error message.
 
 ### Performance
 
@@ -153,8 +157,8 @@ export function renderApp(ctx: AppContext): { unmount: () => void }
 ## 9. Open Questions
 
 - [ ] Ship light theme in v0.4.0 or defer to v0.4.1? (META-011 §9 — user decision pending)
-- [ ] `@inkjs/ui` vendor copy threshold: how many months stale before we fork into `widgets/`?
 
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-foundation; synthesized from META-011 + Claude Code UI research
+- 2026-04-17 @hiepht: detail-pass — added lockb commit policy, CI `bun audit --prod` gate, `@inkjs/ui` rot trigger with 14d/18m thresholds, npm provenance check for ink@7 + @inkjs/ui@2; closed vendor-threshold open question

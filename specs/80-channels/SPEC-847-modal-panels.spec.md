@@ -8,7 +8,7 @@ created: 2026-04-17
 updated: 2026-04-17
 release: v0.4
 layer: channels
-depends_on: [META-011, SPEC-840, SPEC-849]
+depends_on: [META-011, SPEC-840, SPEC-842, SPEC-849]
 blocks: []
 estimated_loc: 350
 files_touched:
@@ -64,6 +64,10 @@ files_touched:
 - Layer rule (SPEC-833): modals may import `src/cost/dashboard.ts` and `src/cli/debug/doctor.ts` only through their exported types/functions (no deep internal imports).
 - `HelpModal` max-height = `Math.floor(rows / 2)` to match Claude Code `HelpV2.tsx:20` pattern; all other modals use full terminal height.
 - SIGINT during any modal: SPEC-849 `<AltScreen>` SIGINT guard handles restore — modals must not install competing SIGINT handlers.
+- `MemoryModal` renders MEMORY.md content through the SPEC-843 ANSI-OSC stripper before display. Verification: fixture MEMORY.md containing `\x1b[2J\x1b[H` must NOT wipe the terminal when the modal opens.
+- `DoctorModal` memoizes the `runDoctor()` result for the modal's lifetime; user keypress `r` forces a re-run. `src/cli/debug/doctor.ts` must expose a pure-logic function (not direct stdout writes); if it currently writes to stdout, refactor into a returned `CheckRow[]` as part of this SPEC's T4 task.
+- `<AltScreen>` scrollback-wipe guard is verified in SPEC-849 `meta-ux.test.ts` (cross-ref §6).
+- Slash command routing that opens modals is provided by SPEC-842 (hence dependency).
 
 ### Performance
 
@@ -152,6 +156,13 @@ export function ModelPickerModal(
 - [ ] Should `/memory` modal support editing MEMORY.md inline, or read-only only? (read-only for v0.4; edit deferred)
 - [ ] `/export` — support clipboard export (OSC 52) in addition to file? (OSC clipboard deferred to v0.5 per META-011 §2.2)
 
+## 6. Cross-References
+
+- SPEC-842: slash command dispatcher that triggers modal open.
+- SPEC-843: ANSI-OSC stripper used by MemoryModal.
+- SPEC-849: `<AltScreen>` component + `meta-ux.test.ts` scrollback-wipe guard.
+
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-dialogs; synthesized from META-011 Phase D + Claude Code modal research
+- 2026-04-17 @hiepht: detail-pass — added SPEC-842 to depends_on; MemoryModal ANSI-OSC strip guard + fixture test; DoctorModal memoize+keypress-r re-run + pure-function refactor note; AltScreen scrollback-wipe guard cross-ref to SPEC-849 meta-ux.test.ts; added §6 cross-references

@@ -57,10 +57,15 @@ files_touched:
 - Layer rule (SPEC-833): no import from `tools/`.
 - Max 400 LoC per file.
 
+### Security
+
+- `FileRefAutocomplete` MUST apply the `src/permissions/pathValidator.ts::SENSITIVE_PATTERNS` deny-list. Patterns matching `.ssh/`, `.env`, `secrets.enc`, `.vault-key`, `*.pem`, `*.key` are hidden from results AND `@<path>` submission is rejected with `ErrorCode.P_OPERATION_DENIED` plus a user-visible hint explaining why the path is blocked.
+
 ### Performance
 
 - Dropdown open-to-render <16ms (one frame budget).
-- File-ref scan capped at 200 results; async with `Glob` scan, debounced 80ms.
+- `FILE_REF_SCAN_TIMEOUT_MS = 200` — Glob scan is aborted after 200ms regardless of results count; `.gitignore` + `.nimbusignore` used for pre-filter to reduce scan surface. Debounce 80ms kept.
+- Any preview rendered from an `@file` reference MUST route through the SPEC-843 ANSI-OSC stripper before display.
 
 ## 4. Prior Decisions
 
@@ -78,7 +83,7 @@ files_touched:
 | T2 | `HelpOverlay.tsx` — 3-tab full-screen overlay | `/help` renders 3 tabs; tab-switch works; Esc closes; Commands list non-empty | 100 | T1 |
 | T3 | `FileRefAutocomplete.tsx` — fuzzy file-ref | `@file path/to` narrows list; max 200 results; Tab accepts | 60 | SPEC-840 |
 | T4 | `autocomplete.test.ts` — full suite | All nav, accept, dismiss, `/help`, `?` synonym, file-ref assertions green | 150 | T1, T2, T3 |
-| T5 | Delete legacy files | `slashAutocomplete.ts` + `slashRenderer.ts` removed; no dead imports remain | -519 net | T4 |
+| T5 | Delete legacy files | The following files must be migrated BEFORE the delete lands: `scripts/pty-smoke/repl-repro.ts`, `scripts/pty-smoke/repl-repro-dual.ts`, `scripts/pty-smoke/repl-repro-full.ts`, `tests/channels/cli/slashAutocomplete.test.ts`, `tests/channels/cli/slashRenderer.test.ts`, `tests/channels/cli/repl.confirmReplExit.test.ts`, `src/channels/cli/repl.ts:31`. After delete: `bun run typecheck` exits green. | -519 net | T4 |
 
 ## 6. Verification
 
@@ -137,8 +142,9 @@ export function FileRefAutocomplete(props: FileRefAutocompleteProps): React.Reac
 ## 9. Open Questions
 
 - [ ] Should category ordering in the dropdown be user-configurable or hardcoded? (defer to v0.5)
-- [ ] File-ref autocomplete: include hidden files (`.env`, `.gitignore`)? (security risk — default exclude, confirm with user)
+- [x] File-ref autocomplete: include hidden files (`.env`, `.gitignore`)? — CLOSED: hidden files matching `SENSITIVE_PATTERNS` are excluded; remaining hidden files also excluded by default (`.gitignore` + `.nimbusignore` pre-filter). Re-open as explicit user request in v0.5.
 
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-foundation; synthesized from META-011 + Claude Code HelpV2 + commandSuggestions research
+- 2026-04-17 @hiepht: detail-pass — added SENSITIVE_PATTERNS deny-list for FileRefAutocomplete (P_OPERATION_DENIED on match); pinned FILE_REF_SCAN_TIMEOUT_MS=200 + .nimbusignore pre-filter; named all 7 broken imports in T5 deletion migration with typecheck acceptance; added ANSI-OSC stripper requirement for @file previews; closed hidden-files open question

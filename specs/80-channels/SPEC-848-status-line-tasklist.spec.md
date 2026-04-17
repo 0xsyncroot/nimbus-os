@@ -50,12 +50,14 @@ files_touched:
 
 - Bun ≥1.3.5. TypeScript strict, no `any`. Max 400 LoC per file.
 - Layer rule (SPEC-833): `channels/cli/` accesses task state only via event bus topic `tools.todoUpdate`; no direct import of AgentLoop internals.
+- `figures` icons (already a SPEC-840 dep) MUST be used instead of literal Unicode characters: `figures.tick` for `✔`, `figures.squareSmallFilled` for `◼`, `figures.squareSmall` for `◻`, `figures.pointerSmall` for `▸`. This avoids Windows legacy `cmd.exe` rendering `?` for non-ASCII glyphs.
 - `figures` icons must degrade to ASCII (`[x]`, `[.]`, `[ ]`) when `noColor` is true and terminal doesn't support Unicode (detected via `process.env.TERM`).
 - SIGWINCH triggers `AppContext` cols/rows update (SPEC-840); `StatusLine` consumes via `useContext(AppCtx)` — no direct `process.stdout` subscription.
 
 ### Performance
 
 - `StatusLine` re-render ≤1ms (text concat only, no layout recalculation).
+- `STATUS_DEBOUNCE_MS = 300` — cost and context percentage recompute is gated behind a 300ms debounce using a stable `debounceTimerRef` pattern to prevent excessive recalculation on rapid AppContext updates.
 - `useTasks` TTL sweep runs on a 5s interval via `useEffect` + `clearInterval` on unmount; no memory leak.
 
 ### Resource / Business
@@ -128,6 +130,12 @@ export function PromptInputFooter(props: PromptInputFooterProps): React.ReactEle
 
 // src/channels/cli/ink/components/TaskListV2.tsx
 export function TaskListV2(): React.ReactElement
+
+// src/channels/cli/ink/components/StatusLine.tsx
+// Permission-mode → ThemeToken mapping (used by StatusLine + PromptInputFooter)
+export function getModeColor(mode: PermissionMode): ThemeToken;
+// Mapping: default→'text', readonly→'inactive', acceptEdits→'warning',
+//          bypass→'error', plan→'permission', vim→'suggestion'
 ```
 
 ## 8. Files Touched
@@ -142,7 +150,9 @@ export function TaskListV2(): React.ReactElement
 
 - [ ] Should `StatusLine` show MCP connection count alongside model name? (nice-to-have, defer to v0.4.1)
 - [ ] `TaskListV2` scroll: should user be able to scroll past the clamp to see older tasks? (defer to v0.4.1)
+- [ ] StatusLine custom shell-hook command (à la Claude Code)? Decision: NO for v0.4 (adds shell execution surface, command-injection risk). Re-open as a separate SPEC in v0.5 if requested by users.
 
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-dialogs; synthesized from META-011 Phase E + Claude Code status/tasklist research
+- 2026-04-17 @hiepht: detail-pass — replaced literal glyphs with figures package constants (figures.tick/squareSmallFilled/squareSmall/pointerSmall) for Windows cmd.exe compatibility; added getModeColor(PermissionMode):ThemeToken interface with 6-mode mapping; pinned STATUS_DEBOUNCE_MS=300; decided NO to shell-hook command for v0.4 (command-injection risk)

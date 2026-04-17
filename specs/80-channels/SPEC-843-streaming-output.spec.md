@@ -51,14 +51,26 @@ files_touched:
 
 ### Technical
 - Bun ≥1.3.5, TypeScript strict, no `any`, max 400 LoC per file.
-- Spinner frames match Claude Code per OS: `['·','✢','✳','✶','✻','✽']` ping-pong on macOS; ASCII fallback on non-UTF8 terminals.
-- Stall color: linear RGB lerp from theme `claude` → `rgb(171,43,63)` over 0–5s.
+- All assistant / tool-result / plan-body text MUST be stripped of ANSI (`\x1b[...`, `\x9b...`) and OSC (`\x1b]...`) sequences before render. This applies to both the fast-path and the full rendering path. `<tool_output trusted=false>` wrapper is respected per META-009 T22.
+- Spinner frames per OS:
+  - `env.TERM_PROGRAM === 'ghostty'`: `['·','✢','✳','✶','✻','*']`
+  - darwin default: `['·','✢','✳','✶','✻','✽']`
+  - linux + windows: `['·','✢','*','✶','✻','✽']`
+  - ASCII fallback on non-UTF8 terminals.
+- Stall color: linear RGB lerp from theme `claude` → `rgb(171,43,63)` over 0–3s (stall threshold = 3s, matching Claude Code).
 - `NO_COLOR` disables ANSI; reduced-motion disables animation.
 - `Markdown.tsx` tolerates partial streamed blocks — never crash on fragment.
+- `marked` configured safe: `gfm: true, breaks: false, pedantic: false, async: false`. Input pre-sanitized. `marked` is a known past-CVE hotspot (prototype pollution, ReDoS) — treat output as untrusted rendering.
 - `marked` pinned exact (streaming API unstable across minors).
+- In-progress message renders raw text; `marked.lexer` is invoked ONCE on `message_stop`. Partial deltas never hit the MD cache to prevent cache pollution from incomplete Markdown fragments.
 
 ### Performance
 - Markdown LRU cache hit ≥90% on 10-turn session replay.
+- `MAX_STATIC_BLOCKS = 500` — LRU-evict older `<Static>` blocks beyond this limit. Note: in-TUI transcript rewind is a v0.5 feature; terminal scrollback is the history mechanism for v0.4.
+- `FRAME_INTERVAL_MS = 80` — spinner tick interval.
+- `STALL_THRESHOLD_MS = 3000` — stall detection threshold (matches Claude Code).
+- `REDUCED_MOTION_CYCLE_MS = 2000` — brightness pulse interval for reduced-motion mode.
+- Hash function: `Bun.hash` (wyhash) on Bun runtime; djb2 as Node fallback. `sha256` is FORBIDDEN on the render path.
 - Fast-path skip when `MD_SYNTAX_RE` has no match in first 500 chars (reduces marked overhead for prose-only responses).
 - Spinner frame update must not trigger full React tree re-render; use `useReducer` + `memo` to isolate.
 
@@ -144,8 +156,9 @@ export function registerToolResultRenderer(toolName: string, renderer: ToolResul
 ## 9. Open Questions
 
 - [ ] Verb set size: 20 for v0.4, port full ~500 from Claude Code in v0.4.1?
-- [ ] Stall threshold: start interpolation at 2s or 3s? (Claude Code uses ~3s — match unless user prefers different)
+- [x] Stall threshold — CLOSED: 3s, matching Claude Code. `STALL_THRESHOLD_MS = 3000` pinned in §3 Performance.
 
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-streaming.
+- 2026-04-17 @hiepht: detail-pass — added ANSI/OSC strip requirement (META-009 T22); pinned MAX_STATIC_BLOCKS=500, FRAME_INTERVAL_MS=80, STALL_THRESHOLD_MS=3000, REDUCED_MOTION_CYCLE_MS=2000; hash=Bun.hash/djb2 (sha256 forbidden); ghostty/darwin/linux+win spinner frame sets; marked safe config + CVE note; cache-pollution fix (lexer on message_stop only); closed stall-threshold open question (3s)

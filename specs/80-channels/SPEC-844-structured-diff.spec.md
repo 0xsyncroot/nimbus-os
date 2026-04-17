@@ -47,9 +47,10 @@ files_touched:
 
 ### Technical
 - Bun ≥1.3.5, TypeScript strict, no `any`, max 400 LoC per file.
-- `WeakMap` cache requires hunk objects to be stable references; callers must not re-create hunk objects on each render tick.
+- `WeakMap` cache requires hunk objects to be stable references; callers must not re-create hunk objects on each render tick. Tool-event adapter must freeze and memoize hunk objects per `toolUseId`; re-emit the same references on re-render so `WeakMap` cache hits. If `JSON.parse` creates fresh objects each render, the cache never hits.
+- Diff hunks are wrapped in `<Box borderStyle="dashed" borderColor="subtle" borderTop borderBottom>` (top and bottom borders only). Matches Claude Code `FileEditToolDiff.tsx:98`.
 - Gutter width = 2 chars for marker (`+ `/`- `/`  `) + right-aligned line number; total gutter ≤8 chars.
-- Narrow fallback threshold: `process.stdout.columns - GUTTER_WIDTH < 20` → use `Fallback.tsx`.
+- Narrow fallback threshold: `cols - GUTTER_WIDTH < 40` → use `Fallback.tsx`. (Was ambiguous between `cols < 40` and `cols - GUTTER < 20`; unified here. Cite Claude Code `StructuredDiff.tsx:56-60`.)
 - `NO_COLOR` → strip all ANSI; use plain `+`/`-` chars only.
 - NAPI absence detection: `colorDiff.ts` must `try/require` the NAPI module and gracefully fall through to pure-TS path.
 
@@ -146,3 +147,4 @@ export function colorize(line: DiffLine, noColor: boolean): string;
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-streaming.
+- 2026-04-17 @hiepht: detail-pass — added dashed Box border (top+bottom, FileEditToolDiff.tsx:98 ref); hunk-object freeze+memoize per toolUseId for WeakMap correctness; unified narrow-fallback threshold to cols-GUTTER_WIDTH<40 (StructuredDiff.tsx:56-60 ref)
