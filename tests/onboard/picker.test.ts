@@ -226,3 +226,42 @@ describe('SPEC-901 v0.3.12: confirmPick helper (arrow+Enter only, no shortcuts)'
     expect(['allow', 'deny']).toContain(result);
   });
 });
+
+describe('SPEC-901 v0.3.14: readline.emitKeypressEvents edge cases', () => {
+  test('chunk-split ANSI escape (ESC arrives, then [B later) → arrow-down works', async () => {
+    // v0.3.13's parseKeys saw two chunks as ESC + "[B" — emitted a bare ESC
+    // (ignored) then "[" and "B" as individual chars (ignored), leaving
+    // cursor at default. Enter then selected wrong action. readline's
+    // keypress parser buffers across chunks.
+    const { input, output } = mockIO(['\u001b', '[B', CR]);
+    const result = await confirmPick('Do it?', { input, output });
+    expect(result).toBe('deny');
+  });
+
+  test('Vietnamese stray bytes ("nhỉ") + arrow-down + Enter → deny (chars ignored)', async () => {
+    // Simulates user typing "xác nhận nhỉ" in REPL and stray "nhỉ" buffered
+    // bytes arrive while the confirm picker is open. UTF-8 combining marks
+    // must not fire any shortcut.
+    const { input, output } = mockIO(['nhỉ', ARROW_DOWN, CR]);
+    const result = await confirmPick('Do it?', { input, output });
+    expect(result).toBe('deny');
+  });
+
+  test('arrow-down ×3 clamped at last item (never) + Enter', async () => {
+    const { input, output } = mockIO([ARROW_DOWN, ARROW_DOWN, ARROW_DOWN, CR]);
+    const result = await confirmPick('Do it?', { input, output });
+    expect(result).toBe('never');
+  });
+
+  test('arrow-up at top stays on first (allow) + Enter', async () => {
+    const { input, output } = mockIO([ARROW_UP, CR]);
+    const result = await confirmPick('Do it?', { input, output });
+    expect(result).toBe('allow');
+  });
+
+  test('multiple stray bytes + arrow-down ×2 + Enter → always', async () => {
+    const { input, output } = mockIO(['xyz', ARROW_DOWN, ARROW_DOWN, CR]);
+    const result = await confirmPick('Do it?', { input, output });
+    expect(result).toBe('always');
+  });
+});

@@ -1,0 +1,92 @@
+#!/usr/bin/env expect -f
+# picker-smoke.expect — real-PTY smoke test for the v0.3.14 picker rewrite.
+#
+# Drives scripts/pty-smoke/picker-harness.ts under a genuine pseudo-terminal
+# and asserts each of the four regression scenarios the team has been
+# shipping broken since v0.3.10. Exits non-zero on any miss so CI can fail
+# loudly; prints compact `[OK] scenario-name` lines on success.
+#
+# Run with:  expect scripts/pty-smoke/picker-smoke.expect <bun-path>
+
+set bun [lindex $argv 0]
+if { $bun eq "" } { set bun "bun" }
+set harness "scripts/pty-smoke/picker-harness.ts"
+
+set timeout 10
+log_user 0
+
+proc run_confirm {keys expected label bun harness} {
+    global timeout
+    spawn -noecho $bun run $harness confirm
+    # Wait for the picker prompt to render before we feed keys, so the
+    # keystrokes reach the in-raw-mode listener (not the pre-rawMode cooked
+    # buffer). We match on the question text written in the harness.
+    expect {
+        -re "Do it\\?" { }
+        timeout { send_error "\[FAIL\] $label: prompt never rendered\n"; exit 1 }
+    }
+    # Small pause to guarantee setRawMode + keypress listener are armed.
+    after 150
+    foreach k $keys { send -- $k }
+    expect {
+        -re "<<RESULT:(allow|deny|always|never)>>" {
+            set got $expect_out(1,string)
+            if { $got eq $expected } {
+                send_user "\[OK\] $label → $got\n"
+            } else {
+                send_user "\[FAIL\] $label: expected $expected, got $got\n"
+                exit 1
+            }
+        }
+        timeout {
+            send_error "\[FAIL\] $label: timed out waiting for result marker\n"
+            exit 1
+        }
+    }
+    # Wait for child exit to reset PTY cleanly before next scenario.
+    wait
+}
+
+# ------------------------------------------------------------------
+# Scenario 1: Enter on default → allow
+# (Baseline — the most common interaction; must never regress.)
+# ------------------------------------------------------------------
+run_confirm {"\r"} "allow" "1-enter-default" $bun $harness
+
+# ------------------------------------------------------------------
+# Scenario 2: ArrowDown + Enter → deny
+# (v0.3.13: arrow sometimes landed on wrong action because parseKeys
+#  mishandled chunk-split \x1b[B.)
+# ------------------------------------------------------------------
+run_confirm {"\x1b\[B" "\r"} "deny" "2-down-enter" $bun $harness
+
+# ------------------------------------------------------------------
+# Scenario 3: Stray typed chars ("xyz") + ArrowDown + Enter → deny
+# (v0.3.12: shortcuts leaked on stray buffered bytes from prior REPL
+#  line; confirmPick now has no shortcuts, and unknown keys are
+#  explicitly ignored.)
+# ------------------------------------------------------------------
+run_confirm {"xyz" "\x1b\[B" "\r"} "deny" "3-stray-then-down-enter" $bun $harness
+
+# ------------------------------------------------------------------
+# Scenario 4: Vietnamese stray UTF-8 bytes ("nhỉ") + ArrowDown + Enter → deny
+# (v0.3.13: the "ỉ" combining mark emitted multi-byte chunks that
+#  parseKeys split into separate bytes; readline.emitKeypressEvents
+#  groups them as a single unknown keypress which is ignored.)
+# ------------------------------------------------------------------
+run_confirm {"nh\u1ec9" "\x1b\[B" "\r"} "deny" "4-vietnamese-stray-down-enter" $bun $harness
+
+# ------------------------------------------------------------------
+# Scenario 5: ArrowDown ×3 (clamped) + Enter → never
+# (Exercises the clamp at items.length-1 plus long-sequence handling.)
+# ------------------------------------------------------------------
+run_confirm {"\x1b\[B" "\x1b\[B" "\x1b\[B" "\x1b\[B" "\r"} "never" "5-down-clamp" $bun $harness
+
+# ------------------------------------------------------------------
+# Scenario 6: ArrowDown ×2 + ArrowUp + Enter → deny
+# (Exercises up navigation mid-pick.)
+# ------------------------------------------------------------------
+run_confirm {"\x1b\[B" "\x1b\[B" "\x1b\[A" "\r"} "deny" "6-down-down-up" $bun $harness
+
+send_user "\nAll PTY smoke scenarios passed.\n"
+exit 0

@@ -2,6 +2,33 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-17 — v0.3.14-alpha URGENT: picker stop rolling own keystroke parser
+
+- @hiepht: **SPEC-901 v0.3.14 rewrite** — after four consecutive TTY picker
+  regressions shipped in v0.3.10 (double echo "yy") → v0.3.11 (race between
+  autocomplete cleanup and rawMode enable) → v0.3.12 (shortcut leaked on
+  stray buffered byte) → v0.3.13 (bespoke `parseKeys` mishandled chunk-split
+  ANSI escapes so an arrow occasionally landed on the wrong action), replace
+  the hand-rolled chunk parser with `readline.emitKeypressEvents(stream)` —
+  the same reference keypress parser Claude Code uses via ink's `useInput`,
+  used by every major interactive Node CLI. This gets us for free: ANSI
+  escape parsing across chunk boundaries, correct UTF-8 grouping (so
+  Vietnamese "nhỉ" combining marks don't fire stray shortcuts), Ctrl+key
+  recognition via `key.ctrl`, and idempotent setup (safe when autocomplete
+  already touched stdin during the same REPL turn). Decision rationale: we
+  were rediscovering bugs that Node solved in 2013; rolling-own was
+  premature optimisation for 30 LoC of "saving a dep" that cost four
+  shipped broken releases in a week. Unknown keypresses are now explicitly
+  ignored rather than optimistically routed through shortcut tables —
+  conservative by default.
+- @hiepht: **New Gate-B harness** — `tests/onboard/picker.pty.smoke.test.ts`
+  allocates a real pseudo-terminal via libc (`posix_openpt` / `grantpt` /
+  `unlockpt` / `ptsname` through Bun FFI), spawns the picker harness with
+  stdio bound to the slave, and drives real ANSI sequences from the master
+  fd. Covers the exact four regressions plus chunk-split ESC arrival and
+  arrow clamping. Mock-Readable unit tests proved insufficient four
+  releases in a row; PTY smoke is now the gate for any picker change.
+
 ## 2026-04-16 — v0.3.7-alpha URGENT: binary-upgrade silently locks existing vault
 
 - @hiepht: **Bug V1 (SPEC-152 / SPEC-901 v0.2.1 hardening)** —

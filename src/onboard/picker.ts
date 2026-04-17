@@ -1,6 +1,31 @@
-// picker.ts — SPEC-901 v0.2.1: generic TTY picker for init wizard.
+// picker.ts — SPEC-901 v0.3.14: generic TTY picker for init wizard.
 // Extracted from src/catalog/picker.ts pattern — ↑↓ navigate, Enter select, 'c' custom, 's' skip.
-// v0.3.10: shortcuts option + confirmPick() helper for single-char confirm without readline double-echo.
+//
+// v0.3.14 URGENT REWRITE: stop rolling our own keystroke parser. Use Node's
+// built-in `readline.emitKeypressEvents(stream)` — the reference keypress
+// parser used by Claude Code (via ink's `useInput`), `node:repl`, and
+// virtually every interactive CLI in the Node ecosystem.
+//
+// What that gets us (for free):
+//  * correct ANSI escape parsing across chunk splits (arrow keys delivered as
+//    `\x1b` in one chunk and `[A` in the next — v0.3.13's parseKeys emitted
+//    a bare ESC then later emitted unrelated bytes, causing the arrow to
+//    land on the wrong action).
+//  * proper multi-byte UTF-8 grouping (so Vietnamese "ỉ" doesn't fire a
+//    stray single-byte shortcut).
+//  * Ctrl+key recognition via the `key.ctrl` boolean (no magic `\u0003`
+//    comparison).
+//  * idempotent setup — calling emitKeypressEvents twice on the same stream
+//    is a no-op, which matters because autocomplete and the picker both
+//    touch stdin during a single REPL turn.
+//
+// History of failures this replaces:
+//  * v0.3.10 double echo "yy" — handler attached before setRawMode(true).
+//  * v0.3.11 autocomplete cleanup racing rawMode acquisition.
+//  * v0.3.12 shortcut fired on stray buffered byte from prior REPL line.
+//  * v0.3.13 parseKeys emitted wrong keys for chunk-split ANSI sequences.
+
+import readline from 'node:readline';
 
 export interface PickerItem<T> {
   value: T;
@@ -21,25 +46,12 @@ type PickerIO = {
   output?: NodeJS.WritableStream & { isTTY?: boolean };
 };
 
-const CTRL_C = '\u0003';
-const ESC = '\u001b';
-const ARROW_UP = `${ESC}[A`;
-const ARROW_DOWN = `${ESC}[B`;
-const CR = '\r';
-const LF = '\n';
-
 export type PickOneResult<T> = T | { custom: string } | 'skip';
 
 /** Four-way confirm picker used for tool-permission prompts.
- *  v0.3.13: rewrite with proper chunk-to-keystroke parser. Prior versions had
- *  a readKey() that treated an entire 'data' chunk as ONE key — a chunk like
- *  "n\r" (stray byte from prior REPL input concatenated with user's Enter)
- *  matched neither Enter nor shortcut → loop stalled or wrong branch. Fix:
- *  parseKeys() splits a chunk into discrete keystrokes (ANSI escape sequences
- *  kept atomic; all other bytes are individual keys) and the loop processes
- *  them sequentially, so buffered-byte + real-key combos work correctly.
- *  Arrow+Enter only (no single-char shortcuts — those fired on stray bytes).
- */
+ *  v0.3.14: arrow+Enter only (no single-char shortcuts — those fired on stray
+ *  bytes from prior REPL input). Stray bytes are ignored by the keypress
+ *  handler (unknown key → no state change). */
 export async function confirmPick(
   question: string,
   io?: PickerIO,
@@ -114,6 +126,16 @@ async function nonTtyPick<T>(
   return items[defaultIdx]!.value;
 }
 
+/** Shape of the key object emitted by readline's keypress parser.
+ *  See https://nodejs.org/api/readline.html#readlineemitkeypresseventsstream-interface */
+interface KeypressKey {
+  name?: string;
+  ctrl?: boolean;
+  meta?: boolean;
+  shift?: boolean;
+  sequence?: string;
+}
+
 async function rawModePick<T>(
   label: string,
   items: PickerItem<T>[],
@@ -131,7 +153,6 @@ async function rawModePick<T>(
   write(`\n  ${label} — ${extras.join(', ')}\n`);
 
   let cursor = defaultIdx;
-  const pageSize = Math.min(items.length, 10);
 
   const render = (): void => {
     for (let i = 0; i < items.length; i++) {
@@ -145,64 +166,117 @@ async function rawModePick<T>(
   };
 
   render();
+
+  // Attach keypress parser. emitKeypressEvents is idempotent — safe to call
+  // even if a prior autocomplete/readline has already installed a decoder on
+  // this stream.
+  readline.emitKeypressEvents(input);
   input.setRawMode?.(true);
   (input as { resume?: () => void }).resume?.();
 
-  // v0.3.13 fix: process chunks via a pending-keys queue so one 'data' event
-  // carrying multiple keystrokes (e.g. "n\r" from buffered REPL byte + user
-  // Enter) is parsed into individual keys and handled sequentially.
-  return new Promise((resolve, reject) => {
-    let pending: string[] = [];
+  return new Promise<PickOneResult<T>>((resolve, reject) => {
     let settled = false;
+    // Guard against re-entrancy inside the 'c' custom-value branch, which
+    // temporarily leaves raw mode and uses readline; if a stray keypress
+    // fires in the interim it must not reach processKey.
+    let busy = false;
+
+    const teardown = (): void => {
+      input.off('keypress', onKeypress);
+      try { input.setRawMode?.(false); } catch { /* ignore */ }
+      (input as { pause?: () => void }).pause?.();
+    };
+
     const done = (value: PickOneResult<T>): void => {
       if (settled) return;
       settled = true;
-      input.off('data', onData);
-      input.setRawMode?.(false);
-      (input as { pause?: () => void }).pause?.();
+      teardown();
       resolve(value);
     };
-    const reject2 = (err: Error): void => {
+
+    const fail = (err: Error): void => {
       if (settled) return;
       settled = true;
-      input.off('data', onData);
-      input.setRawMode?.(false);
-      (input as { pause?: () => void }).pause?.();
+      teardown();
       reject(err);
     };
 
-    const processKey = async (key: string): Promise<void> => {
-      if (settled) return;
-      if (key === CTRL_C) {
+    const onKeypress = (str: string | undefined, key: KeypressKey | undefined): void => {
+      if (settled || busy) return;
+      // key is usually defined; str fallback for plain chars when parser
+      // didn't recognise the byte (e.g. some combining marks).
+      const name = key?.name;
+      const ctrl = key?.ctrl === true;
+      const sequence = key?.sequence ?? str ?? '';
+
+      // Ctrl-C
+      if (ctrl && name === 'c') {
         if (allowSkip) { done('skip'); return; }
         done(items[defaultIdx]!.value);
         return;
       }
-      if ((key === 's' || key === 'S') && allowSkip) {
-        unrender();
-        done('skip');
-        return;
-      }
-      if ((key === 'c' || key === 'C') && allowCustom) {
-        unrender();
-        input.setRawMode?.(false);
-        output.write('  Custom value: ');
-        try {
-          const custom = (await readLine(input, output)).trim();
-          done({ custom });
-        } catch (err) {
-          reject2(err as Error);
+
+      // Arrow navigation
+      if (name === 'up') {
+        if (cursor > 0) {
+          cursor--;
+          unrender();
+          render();
         }
         return;
       }
-      if (key === CR || key === LF) {
+      if (name === 'down') {
+        if (cursor < items.length - 1) {
+          cursor++;
+          unrender();
+          render();
+        }
+        return;
+      }
+
+      // Enter / Return
+      if (name === 'return' || name === 'enter') {
         unrender();
         done(items[cursor]!.value);
         return;
       }
-      // Shortcut single-char dispatch (case-insensitive).
-      if (key.length === 1 && key !== CTRL_C) {
-        const lc = key.toLowerCase();
+
+      // Single printable char — shortcut / skip / custom
+      // Skip if modifier held (ctrl/meta) or name is a control key.
+      if (!ctrl && !key?.meta && sequence.length === 1) {
+        const ch = sequence;
+        const lc = ch.toLowerCase();
+        if ((lc === 's') && allowSkip) {
+          unrender();
+          done('skip');
+          return;
+        }
+        if ((lc === 'c') && allowCustom) {
+          busy = true;
+          unrender();
+          // Leave raw mode + drop our listener so readline's interface can
+          // cleanly read a cooked-mode line. We'll reinstate nothing — the
+          // custom branch terminates the picker either way.
+          input.off('keypress', onKeypress);
+          try { input.setRawMode?.(false); } catch { /* ignore */ }
+          output.write('  Custom value: ');
+          readLine(input, output)
+            .then((custom) => {
+              if (settled) return;
+              settled = true;
+              // no raw-mode to restore; teardown's setRawMode(false) is a
+              // no-op, but still pause for symmetry.
+              (input as { pause?: () => void }).pause?.();
+              resolve({ custom: custom.trim() });
+            })
+            .catch((err: Error) => {
+              if (settled) return;
+              settled = true;
+              (input as { pause?: () => void }).pause?.();
+              reject(err);
+            });
+          return;
+        }
         if (Object.prototype.hasOwnProperty.call(shortcuts, lc)) {
           const idx = shortcuts[lc]!;
           if (idx >= 0 && idx < items.length) {
@@ -212,69 +286,16 @@ async function rawModePick<T>(
           }
         }
       }
-      let moved = false;
-      if (key === ARROW_UP && cursor > 0) { cursor--; moved = true; }
-      else if (key === ARROW_DOWN && cursor < items.length - 1) { cursor++; moved = true; }
-      if (moved) {
-        void pageSize;
-        unrender();
-        render();
-      }
-      // Unknown key → ignore, continue waiting.
+
+      // Unknown key → ignore (stray bytes from prior REPL line, UTF-8
+      // combining marks, function keys, etc. must not fire actions).
+      void sequence;
+      void fail;
     };
 
-    const drainPending = async (): Promise<void> => {
-      while (pending.length > 0 && !settled) {
-        const k = pending.shift()!;
-        await processKey(k);
-      }
-    };
-
-    const onData = (chunk: Buffer | string): void => {
-      if (settled) return;
-      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-      const keys = parseKeys(text);
-      pending.push(...keys);
-      void drainPending();
-    };
-
-    input.on('data', onData);
+    input.on('keypress', onKeypress);
   });
 }
-
-/** Split a raw stdin chunk into individual keystroke strings. ANSI escape
- *  sequences (CSI arrows / function keys) are kept atomic; every other byte
- *  becomes its own key. Handles the common case where stdin delivers multiple
- *  keystrokes in one chunk (buffered input + user keystroke). */
-function parseKeys(text: string): string[] {
-  const out: string[] = [];
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i]!;
-    if (ch === '\x1b' && i + 1 < text.length && text[i + 1] === '[') {
-      // CSI sequence: ESC [ <...> <final byte in 0x40-0x7E>
-      let j = i + 2;
-      while (j < text.length) {
-        const b = text.charCodeAt(j);
-        j++;
-        if (b >= 0x40 && b <= 0x7E) break;
-      }
-      out.push(text.slice(i, j));
-      i = j;
-    } else if (ch === '\x1b') {
-      // Bare ESC (or ESC followed by non-[ — treat as ESC alone, rest as separate)
-      out.push(ch);
-      i++;
-    } else {
-      out.push(ch);
-      i++;
-    }
-  }
-  return out;
-}
-
-// Exported for testing.
-export const __testing = { parseKeys };
 
 async function readLine(
   input: NodeJS.ReadableStream,
@@ -289,3 +310,7 @@ async function readLine(
     });
   });
 }
+
+// Exported for tests — kept as a hook so tests can still feed synthetic
+// keystrokes through the public `pickOne`/`confirmPick` API.
+export const __testing = {};
