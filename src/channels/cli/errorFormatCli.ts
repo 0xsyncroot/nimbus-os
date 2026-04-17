@@ -98,9 +98,9 @@ export function formatBootError(err: ErrInput, locale: Locale): { line: string; 
   if (locale === 'vi') {
     if (baseCode === 'U_MISSING_CONFIG') {
       if (reason === 'provider_key_missing' || reason === 'key_ref_unresolved') {
-        const who = provider ? `cho ${provider}` : '';
+        const who = provider ? ` cho ${provider}` : '';
         return {
-          line: `Chưa có API key ${who}đê em chat được.`.replace(/  +/g, ' ').trim(),
+          line: `Chưa có API key${who} để em chat được.`.trim(),
           hint,
         };
       }
