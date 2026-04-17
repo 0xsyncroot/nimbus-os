@@ -70,6 +70,7 @@ files_touched:
 - **`@slack/bolt` not raw Web API** — bolt handles reconnect, event acknowledgement, and rate-limit retries; rolling these manually would be ~500 extra LoC
 - **Block Kit over plain text for approval** — Block Kit buttons give structured, accessible interaction; plain text with "reply Y/N" is fragile and error-prone
 - **OAuth flow in `installer.ts`** — separating install from runtime adapter keeps `adapter.ts` under 400 LoC and makes the install path independently testable
+- **HMAC state verify compares base64url STRINGS (not decoded bytes)** — a SHA256 digest (32 bytes) encodes to 43 base64url chars where the last char carries 4 real bits + 2 "padding" bits. Flipping those padding bits produces a different string but the SAME 32 decoded bytes, so byte-level `timingSafeEqual` would accept tampered input with probability ~1/16 per trailing-char flip. Canonical-form expectedMac + constant-time string compare rejects all non-canonical tampering. (v0.3.18, macOS CI flake)
 
 ## 5. Task Breakdown
 
@@ -143,3 +144,4 @@ export function runOAuthInstall(code: string): Promise<InstallResult>
 
 - 2026-04-16 @hiepht: draft initial for v0.3 sprint
 - 2026-04-16 @hiepht: v0.3 reviewer amendment — add OAuth CSRF protection via HMAC-SHA256 state parameter (5min TTL, verified on redirect); add T_auth task (~20 LoC)
+- 2026-04-17 @hiepht: v0.3.18 fix — `verifyOAuthState` now compares base64url strings (not decoded bytes); closes base64url padding-bit malleability loophole that caused random macOS test flake and would have accepted ~1/16 tampered MACs in production

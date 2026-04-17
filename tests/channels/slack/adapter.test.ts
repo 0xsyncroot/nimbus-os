@@ -153,6 +153,36 @@ describe('SPEC-804 T_auth: HMAC OAuth state (CSRF defence)', () => {
     const result = verifyOAuthState(state, 'different-secret');
     expect(result.valid).toBe(false);
   });
+
+  // Regression: base64url of a 32-byte SHA256 digest is 43 chars; the last
+  // char carries 4 real bits + 2 padding bits. Flipping a padding-bit char
+  // (e.g. 'Y' → 'a', both decode last byte = 0x06) decodes to the SAME
+  // 32 bytes. A byte-level comparison would incorrectly ACCEPT this as a
+  // valid MAC. Verify must reject non-canonical base64url tampering too.
+  test('tampered state (padding-bit malleability) is rejected', () => {
+    const { createHmac } = require('node:crypto');
+    // Brute-force find a state whose mac ends in one of the canonical
+    // trailing chars where a 1-char swap preserves decoded bytes.
+    // Canonical last chars (bottom 2 bits = 0): A E I M Q U Y c g k o s w 0 4 8
+    // For each, there exists a non-canonical sibling with same top-4 bits:
+    //   A↔B C D, E↔F G H, I↔J K L, M↔N O P, Q↔R S T, U↔V W X, Y↔Z a b, ...
+    // We search for a mac ending in 'Y' and flip to 'a'.
+    let collided: { state: string; tampered: string } | null = null;
+    for (let i = 0; i < 2000 && !collided; i++) {
+      const s = generateOAuthState(SECRET + ':probe:' + i);
+      const parts = s.split('.');
+      const mac = parts[2]!;
+      if (mac.endsWith('Y')) {
+        const t = mac.slice(0, -1) + 'a';
+        collided = { state: s, tampered: `${parts[0]}.${parts[1]}.${t}` };
+      }
+    }
+    // Guaranteed hit probability is ~1 - (15/16)^2000 ≈ 1 (any platform).
+    expect(collided).not.toBeNull();
+    const result = verifyOAuthState(collided!.tampered, SECRET);
+    expect(result.valid).toBe(false);
+    expect((result as { valid: false; reason: string }).reason).toBe('mac_mismatch');
+  });
 });
 
 // ---------------------------------------------------------------------------

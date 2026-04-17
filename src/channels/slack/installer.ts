@@ -62,12 +62,16 @@ export function verifyOAuthState(
     const payload = `${nonceB64}${STATE_SEP}${expiresAt}`;
     const expectedMac = createHmac('sha256', installSecret).update(payload).digest('base64url');
 
-    const macBuf = Buffer.from(mac, 'base64url');
-    const expectedBuf = Buffer.from(expectedMac, 'base64url');
-
-    // Constant-time compare to prevent timing attacks.
-    if (macBuf.length !== expectedBuf.length) return { valid: false, reason: 'mac_length_mismatch' };
-    if (!timingSafeEqual(macBuf, expectedBuf)) return { valid: false, reason: 'mac_mismatch' };
+    // Compare on the base64url string form (not decoded bytes) to reject
+    // non-canonical encodings — e.g., flipping the 2 "padding" bits in the
+    // trailing char of a 43-char SHA256 base64url digest decodes to the same
+    // 32 bytes, so byte-level timingSafeEqual would accept tampered input.
+    // `expectedMac` is always canonical (Node's `.digest('base64url')`), so any
+    // byte-level change to the MAC segment produces a different string here.
+    const macStrBuf = Buffer.from(mac, 'utf8');
+    const expectedStrBuf = Buffer.from(expectedMac, 'utf8');
+    if (macStrBuf.length !== expectedStrBuf.length) return { valid: false, reason: 'mac_length_mismatch' };
+    if (!timingSafeEqual(macStrBuf, expectedStrBuf)) return { valid: false, reason: 'mac_mismatch' };
 
     return { valid: true };
   } catch {
