@@ -31,7 +31,10 @@ const LF = '\n';
 export type PickOneResult<T> = T | { custom: string } | 'skip';
 
 /** Four-way confirm picker used for tool-permission prompts.
- *  Replaces raw readline in confirm.ts + makeOnAsk in repl.ts — fixes double-echo (Bug B).
+ *  v0.3.12: remove single-char shortcuts — they fired on buffered keystrokes
+ *  from the preceding REPL input (e.g. "tiếp tục nhỉ\r" → the 'n' in "nhỉ"
+ *  leaked into confirmPick's readKey and auto-denied). Arrow+Enter only,
+ *  matching Claude Code's confirm UX.
  */
 export async function confirmPick(
   question: string,
@@ -43,14 +46,27 @@ export async function confirmPick(
     { value: 'always', label: 'Always' },
     { value: 'never', label: 'Never (deny + remember)' },
   ];
-  const picked = await pickOne(question, items, {
-    default: 0,
-    shortcuts: { y: 0, n: 1, a: 2 },
-  }, io);
-  // pickOne returns PickOneResult; since we never set allowSkip/allowCustom it
-  // will always be one of the item values.
+  // Drain stdin buffer BEFORE rendering the menu — any stale bytes from the
+  // previous REPL line or autocomplete flow get discarded, so pickOne's
+  // readKey listens only to fresh keystrokes the user makes for THIS prompt.
+  const input = io?.input ?? process.stdin;
+  drainStdin(input as NodeJS.ReadableStream);
+  const picked = await pickOne(question, items, { default: 0 }, io);
   if (picked === 'skip' || typeof picked === 'object') return 'deny';
   return picked;
+}
+
+/** Synchronously drain any buffered bytes in a readable stream. Used before
+ *  opening an interactive prompt so leftover keystrokes from the prior input
+ *  cycle don't leak into the new prompt's first readKey. */
+function drainStdin(stream: NodeJS.ReadableStream): void {
+  const s = stream as NodeJS.ReadableStream & { read?: (n?: number) => unknown };
+  if (typeof s.read !== 'function') return;
+  // Drain in a tight loop — read() returns null when buffer is empty
+  for (let i = 0; i < 64; i++) {
+    const chunk = s.read();
+    if (chunk === null || chunk === undefined) break;
+  }
 }
 
 export async function pickOne<T>(

@@ -96,24 +96,13 @@ describe('SPEC-801: confirm prompt (non-TTY / original path)', () => {
   });
 });
 
-// v0.3.10 regression tests for Bug B (double-echo fix)
-describe('SPEC-801 v0.3.10: confirmPick TTY path (no double-echo)', () => {
-  test('single keystroke "y" → allow (not deny from double-echo)', async () => {
-    const { input, output } = makeRawIO(['y']);
+// v0.3.12 confirmPick TTY — arrow+Enter only, no single-char shortcuts
+// (shortcuts fired on buffered keystrokes from prior REPL line → auto-deny bug)
+describe('SPEC-801 v0.3.12: confirmPick TTY path (arrow + Enter)', () => {
+  test('Enter on default (Yes) → allow', async () => {
+    const { input, output } = makeRawIO(['\r']);
     const ok = await confirm('go?', { input, output, timeoutMs: 5000 });
     expect(ok).toBe(true);
-  });
-
-  test('single keystroke "Y" (uppercase) → allow', async () => {
-    const { input, output } = makeRawIO(['Y']);
-    const ok = await confirm('go?', { input, output, timeoutMs: 5000 });
-    expect(ok).toBe(true);
-  });
-
-  test('single keystroke "n" → deny', async () => {
-    const { input, output } = makeRawIO(['n']);
-    const ok = await confirm('go?', { input, output, timeoutMs: 5000 });
-    expect(ok).toBe(false);
   });
 
   test('arrow-down + Enter → deny (second item = No)', async () => {
@@ -122,21 +111,24 @@ describe('SPEC-801 v0.3.10: confirmPick TTY path (no double-echo)', () => {
     expect(ok).toBe(false);
   });
 
-  test('Esc (Ctrl-C) → returns boolean without throwing', async () => {
-    // Ctrl-C without allowSkip in pickOne returns items[defaultIdx] = 'allow' = true.
-    // The important contract is: does not throw, returns a boolean.
+  test('Ctrl-C → returns boolean (ignored by pickOne without allowSkip → default allow)', async () => {
     const { input, output } = makeRawIO(['\u0003']);
     const ok = await confirm('go?', { input, output, timeoutMs: 5000 });
     expect(typeof ok).toBe('boolean');
   });
 
-  test('stdin emits "y" once → captured output does NOT contain "yy"', async () => {
-    const { input, output } = makeRawIO(['y']);
+  test('Regression: stray "n" byte does NOT auto-deny (no shortcut dispatch)', async () => {
+    // v0.3.11 bug: "n" from buffered "tiếp tục nhỉ" leaked into confirmPick
+    // → shortcut "n" auto-denied without rendering full menu.
+    // v0.3.12 removed shortcuts. Stray "n" is ignored; Enter acts on default.
+    const { input, output } = makeRawIO(['n', '\r']);
+    const ok = await confirm('go?', { input, output, timeoutMs: 5000 });
+    expect(ok).toBe(true); // default Yes stays selected; 'n' ignored, Enter confirms
+  });
+
+  test('no double-echo artefact in output', async () => {
+    const { input, output } = makeRawIO(['\r']);
     await confirm('go?', { input, output, timeoutMs: 5000 });
-    // The picker renders item labels, not the raw keystrokes — so "y" should
-    // not appear as double "yy" in the output (which would indicate double-echo).
-    const text = output.captured;
-    // No raw "yy" substring (double-echo artefact):
-    expect(text).not.toContain('yy');
+    expect(output.captured).not.toContain('yy');
   });
 });

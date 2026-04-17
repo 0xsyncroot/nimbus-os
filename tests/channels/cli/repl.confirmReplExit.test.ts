@@ -81,51 +81,58 @@ describe('v0.3.5: parseConfirmAnswer', () => {
   });
 });
 
-describe('v0.3.11: makeOnAsk delegates to confirmPick (single-char shortcuts, no Enter)', () => {
-  test('y single keystroke → allow (no Enter needed, no double-echo)', async () => {
+describe('v0.3.12: makeOnAsk delegates to confirmPick (arrow + Enter, no shortcuts)', () => {
+  test('Enter on default (Yes) → allow', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true);
     expect(onAsk).toBeDefined();
 
     const pending = onAsk!({ toolUseId: 't1', name: 'Write', input: { path: '/tmp/x.txt' } });
-    // confirmPick resolves on single char via shortcuts map — no '\r' needed
     await new Promise((r) => setImmediate(r));
-    stream.write('y');
+    stream.write('\r');
     const decision = await pending;
 
     expect(decision).toBe('allow');
-    // Note: confirmPick (pickOne) pauses stdin in cleanup by design; slashAutocomplete
-    // resume()s on re-entry per SPEC-505. Pause here is acceptable.
   });
 
-  test('n single keystroke → deny', async () => {
+  test('ArrowDown + Enter → deny', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't2', name: 'Bash', input: { cmd: 'ls' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('n');
+    stream.write('\x1b[B'); // ArrowDown
+    await new Promise((r) => setImmediate(r));
+    stream.write('\r');
     expect(await pending).toBe('deny');
   });
 
-  test('a single keystroke → always', async () => {
+  test('ArrowDown×2 + Enter → always', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't3', name: 'Write', input: { path: '/tmp/y.txt' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('a');
+    stream.write('\x1b[B');
+    await new Promise((r) => setImmediate(r));
+    stream.write('\x1b[B');
+    await new Promise((r) => setImmediate(r));
+    stream.write('\r');
     expect(await pending).toBe('always');
   });
 
-  test('Enter with default selected → allow (Yes is item[0])', async () => {
+  test('Regression: "n" in buffered junk does NOT auto-deny (no shortcut dispatch)', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't4', name: 'Write', input: { path: '/tmp/z.txt' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('\r'); // Enter on default-selected Yes
+    // Stray 'n' from a prior REPL line (e.g. "tiếp tục nhỉ" leftover byte)
+    // used to fire the shortcut map and auto-deny. v0.3.12 removed shortcuts.
+    stream.write('n');
+    await new Promise((r) => setImmediate(r));
+    stream.write('\r'); // User actually presses Enter → should be 'allow'
     expect(await pending).toBe('allow');
   });
 
@@ -134,10 +141,10 @@ describe('v0.3.11: makeOnAsk delegates to confirmPick (single-char shortcuts, no
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
 
-    // Round 1: prompt y (single char via confirmPick shortcut)
+    // Round 1: prompt Enter (default Yes)
     const p1 = onAsk({ toolUseId: 'r1', name: 'Write', input: { path: '/a' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('y');
+    stream.write('\r');
     expect(await p1).toBe('allow');
     // Note: confirmPick pauses stdin on cleanup. Next reader (slashAutocomplete)
     // is responsible for calling resume() (SPEC-505 fix).

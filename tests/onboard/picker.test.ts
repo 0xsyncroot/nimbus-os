@@ -183,21 +183,23 @@ describe('SPEC-901 v0.3.10: pickOne shortcuts option', () => {
   });
 });
 
-describe('SPEC-901 v0.3.10: confirmPick helper', () => {
-  test('"y" shortcut → allow', async () => {
-    const { input, output } = mockIO(['y']);
+describe('SPEC-901 v0.3.12: confirmPick helper (arrow+Enter only, no shortcuts)', () => {
+  test('stray "y" byte ignored, Enter selects default (allow)', async () => {
+    // v0.3.11 had shortcuts { y:0, n:1, a:2 } which fired on buffered bytes
+    // from prior REPL input. v0.3.12 removed shortcuts.
+    const { input, output } = mockIO(['y', CR]);
     const result = await confirmPick('Do it?', { input, output });
     expect(result).toBe('allow');
   });
 
-  test('"n" shortcut → deny', async () => {
-    const { input, output } = mockIO(['n']);
+  test('stray "n" byte ignored, arrow-down + Enter → deny', async () => {
+    const { input, output } = mockIO(['n', ARROW_DOWN, CR]);
     const result = await confirmPick('Do it?', { input, output });
     expect(result).toBe('deny');
   });
 
-  test('"a" shortcut → always', async () => {
-    const { input, output } = mockIO(['a']);
+  test('arrow-down ×2 + Enter → always', async () => {
+    const { input, output } = mockIO([ARROW_DOWN, ARROW_DOWN, CR]);
     const result = await confirmPick('Do it?', { input, output });
     expect(result).toBe('always');
   });
