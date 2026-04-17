@@ -1,11 +1,12 @@
 ---
 id: SPEC-850
 title: keyPromptCore — non-Ink pre-Ink key input pathway
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
+implemented: 2026-04-17
 release: v0.4
 layer: onboard
 depends_on: [META-011, SPEC-151]
@@ -14,6 +15,7 @@ estimated_loc: 80
 files_touched:
   - src/platform/keyPromptCore.ts
   - src/onboard/keyPrompt.ts
+  - src/onboard/init.ts
   - tests/platform/keyPromptCore.test.ts
 ---
 

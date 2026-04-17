@@ -17,6 +17,7 @@ import { switchWorkspace } from '../core/workspace.ts';
 import { askAll, InitAnswersSchema, type InitAnswers } from './questions.ts';
 import { renderTemplates, DEFAULT_SOUL_MD } from './templates.ts';
 import { promptApiKey } from './keyPrompt.ts';
+import { promptMaskedKey } from '../platform/keyPromptCore.ts';
 import { validateKeyFormat, detectProviderFromKey } from './keyValidators.ts';
 import { createKeyManager, type KeyManager } from '../key/manager.ts';
 import { discoverModels, type DiscoverProvider } from '../catalog/discover.ts';
@@ -96,12 +97,18 @@ async function askFast(io: { input?: NodeJS.ReadableStream; output?: NodeJS.Writ
     const envVar = PROVIDER_ENV_VARS[provider];
     const envVal = envVar ? process.env[envVar] : undefined;
     if (envVal) {
-      output.write(`  Using ${envVar} from environment (press Enter to accept or type key): `);
-      const { createInterface } = await import('node:readline');
-      const rl = createInterface({ input, output, terminal: false });
-      const typed = await new Promise<string>((resolve) => {
-        rl.question('', (ans: string) => { rl.close(); resolve(ans.trim()); });
-      });
+      // Prompt is secret-carrying: use masked input so the override value is never echoed.
+      let typed = '';
+      try {
+        typed = await promptMaskedKey({
+          prompt: `  Using ${envVar} from environment (Enter to accept or type key): `,
+          input: input as NodeJS.ReadStream,
+          output,
+          allowEmpty: true,
+        });
+      } catch {
+        // non-interactive or cancelled — fall back to env value silently
+      }
       envKey = typed.length > 0 ? typed : envVal;
     } else {
       // No env var — prompt directly via keyPrompt
