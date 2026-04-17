@@ -13,6 +13,7 @@ import type { ChannelInboundEvent } from '../core/eventTypes.ts';
 import type { Provider } from '../ir/types.ts';
 import { createChannelManager, type ChannelManager } from './ChannelManager.ts';
 import { createTelegramAdapter, type TelegramAdapterConfig } from './telegram/adapter.ts';
+import { createTelegramUIHost } from './telegram/uiHost.ts';
 import {
   getAllowedUserIds,
   getTelegramBotToken,
@@ -31,6 +32,7 @@ import { registerChannelService, __resetChannelService } from '../core/channelPo
 interface TelegramHandle {
   adapter: ReturnType<typeof createTelegramAdapter>;
   botUsername: string;
+  allowedUserIds: Set<number>;
 }
 
 export interface StartTelegramOptions {
@@ -160,6 +162,13 @@ function createRuntime(): ChannelRuntime {
       model: ctx.model,
     };
 
+    // SPEC-831: create a per-turn UIHost bound to this chat for inline-keyboard approvals.
+    const uiHost = createTelegramUIHost({
+      adapter: telegram.adapter,
+      chatId,
+      allowedUserIds: telegram.allowedUserIds,
+    });
+
     const toolAdapter = createLoopAdapter({
       registry: ctx.registry,
       permissions: ctx.gate,
@@ -167,9 +176,27 @@ function createRuntime(): ChannelRuntime {
       sessionId: session.id,
       cwd: ctx.cwd,
       mode: 'default',
-      // No onAsk for Telegram channel — approvals surface via inline keyboard
-      // in a future iteration. For now, destructive ops will return
-      // needs_confirm and the agent will report that back via reply.
+      // SPEC-831: route permission asks through TelegramUIHost inline keyboard.
+      onAsk: async (inv) => {
+        const result = await uiHost.ask<'allow' | 'always' | 'deny'>(
+          {
+            kind: 'confirm',
+            prompt: `Allow tool <b>${inv.name}</b>?\n<code>${JSON.stringify(inv.input).slice(0, 200)}</code>`,
+            timeoutMs: 60_000,
+          },
+          {
+            turnId: inv.toolUseId,
+            correlationId: inv.toolUseId,
+            channelId: 'telegram',
+            abortSignal: abort.turn.signal,
+          },
+        );
+        if (result.kind === 'ok') {
+          const v = result.value;
+          if (v === 'allow' || v === 'always') return v;
+        }
+        return 'deny';
+      },
     });
 
     const userMsg = {
@@ -277,7 +304,7 @@ function createRuntime(): ChannelRuntime {
       );
       await manager.startAll();
 
-      telegram = { adapter, botUsername };
+      telegram = { adapter, botUsername, allowedUserIds: new Set(allowed) };
       logger.info(
         { botUsername, adapterId: 'telegram', allowedCount: allowed.length },
         'channel runtime: telegram started',

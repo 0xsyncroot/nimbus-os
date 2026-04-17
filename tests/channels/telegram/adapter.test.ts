@@ -132,7 +132,7 @@ describe('SPEC-803 T2: parseApprovalCallback', () => {
     expect(approveBtn).toBeDefined();
     const result = parseApprovalCallback(approveBtn!.callback_data);
     expect(result).not.toBeNull();
-    expect(result!.approved).toBe(true);
+    expect(result!.decision).toBe('allow');
     expect(result!.requestId).toBeTruthy();
   });
 
@@ -142,7 +142,7 @@ describe('SPEC-803 T2: parseApprovalCallback', () => {
     expect(denyBtn).toBeDefined();
     const result = parseApprovalCallback(denyBtn!.callback_data);
     expect(result).not.toBeNull();
-    expect(result!.approved).toBe(false);
+    expect(result!.decision).toBe('deny');
   });
 
   test('returns null for non-approval callback data', () => {

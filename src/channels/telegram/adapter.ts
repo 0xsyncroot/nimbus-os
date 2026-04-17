@@ -1,6 +1,7 @@
-// adapter.ts — SPEC-803 T3+T4: Telegram channel adapter (long-polling via Telegram Bot API).
+// adapter.ts — SPEC-803 T3+T4 / SPEC-831: Telegram channel adapter (long-polling via Telegram Bot API).
 // Uses fetch + Telegram Bot API directly (no grammy dependency required at runtime).
 // Unknown userIds silently dropped + security event published. Rate-limited outbound.
+// SPEC-831: callback_query events routed to registered handlers (TelegramUIHost).
 
 import { logger } from '../../observability/logger.ts';
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
@@ -51,14 +52,35 @@ interface ApiResponse<T> {
   description?: string;
 }
 
+/** Shape of a parsed callback_query event emitted by the adapter. */
+export interface TelegramCallbackQuery {
+  chatId: number;
+  userId: number;
+  data: string;
+  messageId: number;
+  queryId: string;
+}
+
+/** Handler registered by TelegramUIHost to receive callback_query events. */
+export type CallbackQueryHandler = (cq: TelegramCallbackQuery) => void;
+
 export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapter & {
   /** Send a message to a specific Telegram chat (used by agent reply handler). */
   sendToChat(chatId: number, text: string, replyMarkup?: ApprovalKeyboard): Promise<void>;
+  /** SPEC-831: Send message and return the assigned messageId. */
+  sendToChatWithId(chatId: number, text: string, replyMarkup?: ApprovalKeyboard | Record<string, unknown>): Promise<number>;
+  /** SPEC-831: Edit (remove) the reply markup of an already-sent message. */
+  editMessageReplyMarkup(chatId: number, messageId: number, markup: ApprovalKeyboard | null): Promise<void>;
+  /** SPEC-831: Register a callback_query handler; returns a dispose function. */
+  onCallbackQuery(handler: CallbackQueryHandler): () => void;
 } {
   let token: string | null = cfg.botToken ?? null;
   let running = false;
   let offset = 0;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // SPEC-831: callback_query handler registry.
+  const callbackQueryHandlers = new Set<CallbackQueryHandler>();
 
   // Telegram limits: 30 msg/sec global + 1 msg/sec per chat.
   const globalLimiter = createRateLimiter({ capacity: 30, refillRatePerSec: 30 });
@@ -139,6 +161,45 @@ export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapte
     getGlobalBus().publish(TOPICS.channel.inbound, event);
   }
 
+  function handleCallbackQuery(update: TelegramUpdate): void {
+    const cq = update.callback_query;
+    if (!cq || !cq.data || !cq.message) return;
+
+    const userId = cq.from.id;
+    const chatId = cq.message.chat.id;
+    const messageId = cq.message.message_id;
+
+    // Security: only process callbacks from allowed users.
+    if (!cfg.allowedUserIds.includes(userId)) {
+      logger.warn({ userId, chatId }, 'telegram: unauthorized callback_query dropped');
+      getGlobalBus().publish(TOPICS.security.event, {
+        type: 'security.event',
+        adapterId: 'telegram',
+        reason: 'unauthorized_telegram_callback',
+        userId,
+        ts: Date.now(),
+      });
+      return;
+    }
+
+    const payload: TelegramCallbackQuery = {
+      chatId,
+      userId,
+      data: cq.data,
+      messageId,
+      queryId: cq.id,
+    };
+
+    // Dispatch to all registered handlers (TelegramUIHost instances).
+    for (const handler of callbackQueryHandlers) {
+      try {
+        handler(payload);
+      } catch (err) {
+        logger.warn({ err: (err as Error).message }, 'telegram: callback_query handler threw');
+      }
+    }
+  }
+
   async function pollOnce(): Promise<void> {
     try {
       const updates = await apiCall<TelegramUpdate[]>('getUpdates', {
@@ -147,7 +208,11 @@ export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapte
         allowed_updates: ['message', 'callback_query'],
       });
       for (const upd of updates) {
-        handleUpdate(upd);
+        if (upd.callback_query) {
+          handleCallbackQuery(upd);
+        } else {
+          handleUpdate(upd);
+        }
         offset = upd.update_id + 1;
       }
     } catch (err) {
@@ -164,11 +229,11 @@ export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapte
     }, POLL_INTERVAL_MS);
   }
 
-  async function sendToChat(
+  async function sendToChatWithId(
     chatId: number,
     text: string,
-    replyMarkup?: ApprovalKeyboard,
-  ): Promise<void> {
+    replyMarkup?: ApprovalKeyboard | Record<string, unknown>,
+  ): Promise<number> {
     if (!token) throw new NimbusError(ErrorCode.U_MISSING_CONFIG, { reason: 'no_telegram_token' });
 
     // Respect rate limits.
@@ -186,7 +251,16 @@ export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapte
       body['reply_markup'] = replyMarkup;
     }
 
-    await apiCall('sendMessage', body);
+    const msg = await apiCall<{ message_id: number }>('sendMessage', body);
+    return msg.message_id;
+  }
+
+  async function sendToChat(
+    chatId: number,
+    text: string,
+    replyMarkup?: ApprovalKeyboard,
+  ): Promise<void> {
+    await sendToChatWithId(chatId, text, replyMarkup);
   }
 
   return {
@@ -234,6 +308,28 @@ export function createTelegramAdapter(cfg: TelegramAdapterConfig): ChannelAdapte
     },
 
     sendToChat,
+    sendToChatWithId,
+
+    async editMessageReplyMarkup(
+      chatId: number,
+      messageId: number,
+      markup: ApprovalKeyboard | null,
+    ): Promise<void> {
+      if (!token) throw new NimbusError(ErrorCode.U_MISSING_CONFIG, { reason: 'no_telegram_token' });
+      const body: Record<string, unknown> = { chat_id: chatId, message_id: messageId };
+      if (markup) {
+        body['reply_markup'] = markup;
+      } else {
+        // Pass empty inline_keyboard to strip buttons.
+        body['reply_markup'] = { inline_keyboard: [] };
+      }
+      await apiCall('editMessageReplyMarkup', body);
+    },
+
+    onCallbackQuery(handler: CallbackQueryHandler): () => void {
+      callbackQueryHandlers.add(handler);
+      return () => { callbackQueryHandlers.delete(handler); };
+    },
   };
 }
 

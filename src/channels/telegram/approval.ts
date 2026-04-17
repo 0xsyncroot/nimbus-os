@@ -1,6 +1,6 @@
-// approval.ts — SPEC-803 T2: Telegram inline keyboard builder + callback parser.
-// Inline keyboard gives native mobile-friendly Approve/Deny UX.
-// Callback data encodes {requestId, approved} within Telegram's 64-byte limit.
+// approval.ts — SPEC-803 T2 / SPEC-831: Telegram inline keyboard builder + callback parser.
+// Inline keyboard gives native mobile-friendly Approve/Always/Deny UX.
+// Callback data encodes {requestId, decision} within Telegram's 64-byte limit.
 
 /** Telegram InlineKeyboardButton shape (subset). */
 export interface InlineKeyboardButton {
@@ -13,6 +13,12 @@ export interface ApprovalKeyboard {
   inline_keyboard: InlineKeyboardButton[][];
 }
 
+/** Options for buildApprovalKeyboard. */
+export interface BuildApprovalKeyboardOptions {
+  /** When true, adds a third "Always" button between Approve and Deny. Default: false. */
+  includeAlways?: boolean;
+}
+
 /** Prefix for approval callback data — allows filtering in update handler. */
 const APPROVAL_PREFIX = 'apr:';
 
@@ -21,37 +27,47 @@ const TELEGRAM_CALLBACK_MAX_BYTES = 64;
 
 /**
  * Build an inline keyboard for a permission-gate approval request.
- * Callback data: `apr:<1|0>:<requestId>` (truncated to 64 bytes total).
+ * Callback data: `apr:<allow|always|deny>:<requestId>` (truncated to 64 bytes total).
+ *
+ * When `opts.includeAlways` is true, a third "Always" button is added.
+ * The function remains backward-compatible: calling with no opts returns 2 buttons.
  */
-export function buildApprovalKeyboard(requestId: string): ApprovalKeyboard {
-  const approveData = `${APPROVAL_PREFIX}1:${requestId}`;
-  const denyData = `${APPROVAL_PREFIX}0:${requestId}`;
-
+export function buildApprovalKeyboard(
+  requestId: string,
+  opts?: BuildApprovalKeyboardOptions,
+): ApprovalKeyboard {
   // Guard: if requestId is too long, truncate to fit within Telegram's limit.
-  const maxIdLen = TELEGRAM_CALLBACK_MAX_BYTES - APPROVAL_PREFIX.length - 2; // "1:" prefix
+  // Longest prefix is "apr:always:" = 11 chars; leave room for decision prefix.
+  const maxIdLen = TELEGRAM_CALLBACK_MAX_BYTES - 'apr:always:'.length;
   const safeId = requestId.slice(0, maxIdLen);
 
-  return {
-    inline_keyboard: [
-      [
-        { text: '✅ Approve', callback_data: `${APPROVAL_PREFIX}1:${safeId}` },
-        { text: '❌ Deny', callback_data: `${APPROVAL_PREFIX}0:${safeId}` },
-      ],
-    ],
-  };
+  const approveData = `${APPROVAL_PREFIX}allow:${safeId}`;
+  const denyData = `${APPROVAL_PREFIX}deny:${safeId}`;
 
-  // Prevent unused variable warnings for the original strings.
-  void approveData;
-  void denyData;
+  const row: InlineKeyboardButton[] = [
+    { text: '✅ Approve', callback_data: approveData },
+  ];
+
+  if (opts?.includeAlways) {
+    const alwaysData = `${APPROVAL_PREFIX}always:${safeId}`;
+    row.push({ text: '🔓 Always', callback_data: alwaysData });
+  }
+
+  row.push({ text: '❌ Deny', callback_data: denyData });
+
+  return { inline_keyboard: [row] };
 }
+
+/** Decision values returned by parseApprovalCallback. */
+export type ApprovalDecision = 'allow' | 'always' | 'deny';
 
 /**
  * Parse callback data from a Telegram inline keyboard action.
- * Returns `{requestId, approved}` or `null` if payload is malformed / not an approval.
+ * Returns `{requestId, decision}` or `null` if payload is malformed / not an approval.
  */
 export function parseApprovalCallback(
   data: string,
-): { requestId: string; approved: boolean } | null {
+): { requestId: string; decision: ApprovalDecision } | null {
   try {
     if (!data.startsWith(APPROVAL_PREFIX)) return null;
     const rest = data.slice(APPROVAL_PREFIX.length);
@@ -59,9 +75,9 @@ export function parseApprovalCallback(
     if (colonIdx === -1) return null;
     const decisionStr = rest.slice(0, colonIdx);
     const requestId = rest.slice(colonIdx + 1);
-    if (decisionStr !== '0' && decisionStr !== '1') return null;
+    if (decisionStr !== 'allow' && decisionStr !== 'always' && decisionStr !== 'deny') return null;
     if (!requestId) return null;
-    return { requestId, approved: decisionStr === '1' };
+    return { requestId, decision: decisionStr as ApprovalDecision };
   } catch {
     return null;
   }
