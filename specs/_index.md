@@ -13,6 +13,7 @@
 | META-005 | SOUL contract — personality files format + injection order | approved | 2026-04-15 |
 | META-009 | Threat model — attack vectors + mitigations | approved | 2026-04-15 |
 | META-010 | Naming conventions — files, identifiers, specs, commits | approved | 2026-04-15 |
+| META-011 | v0.4 CLI UI architecture — Ink port umbrella | draft | 2026-04-17 |
 
 ## v0.1 Feature Specs (33 total)
 
@@ -272,7 +273,14 @@
 |----|-------|--------|------|---------|
 | SPEC-153 | Vault atomic-write + timestamped backup rotation | draft | SPEC-152, META-009 | 50 |
 
-## v0.4 Feature Specs (7 total)
+## v0.4 Feature Specs (9 total)
+
+### channels
+
+| ID | Title | Status | Deps | Est LoC |
+|----|-------|--------|------|---------|
+| SPEC-840 | Ink 7 app bootstrap, theme tokens, base components | draft | META-001, META-010, META-011 | 450 |
+| SPEC-841 | Multi-line PromptInput with paste preservation | draft | META-011, SPEC-840 | 500 |
 
 ### core
 
