@@ -31,10 +31,14 @@ const LF = '\n';
 export type PickOneResult<T> = T | { custom: string } | 'skip';
 
 /** Four-way confirm picker used for tool-permission prompts.
- *  v0.3.12: remove single-char shortcuts — they fired on buffered keystrokes
- *  from the preceding REPL input (e.g. "tiếp tục nhỉ\r" → the 'n' in "nhỉ"
- *  leaked into confirmPick's readKey and auto-denied). Arrow+Enter only,
- *  matching Claude Code's confirm UX.
+ *  v0.3.13: rewrite with proper chunk-to-keystroke parser. Prior versions had
+ *  a readKey() that treated an entire 'data' chunk as ONE key — a chunk like
+ *  "n\r" (stray byte from prior REPL input concatenated with user's Enter)
+ *  matched neither Enter nor shortcut → loop stalled or wrong branch. Fix:
+ *  parseKeys() splits a chunk into discrete keystrokes (ANSI escape sequences
+ *  kept atomic; all other bytes are individual keys) and the loop processes
+ *  them sequentially, so buffered-byte + real-key combos work correctly.
+ *  Arrow+Enter only (no single-char shortcuts — those fired on stray bytes).
  */
 export async function confirmPick(
   question: string,
@@ -46,27 +50,9 @@ export async function confirmPick(
     { value: 'always', label: 'Always' },
     { value: 'never', label: 'Never (deny + remember)' },
   ];
-  // Drain stdin buffer BEFORE rendering the menu — any stale bytes from the
-  // previous REPL line or autocomplete flow get discarded, so pickOne's
-  // readKey listens only to fresh keystrokes the user makes for THIS prompt.
-  const input = io?.input ?? process.stdin;
-  drainStdin(input as NodeJS.ReadableStream);
   const picked = await pickOne(question, items, { default: 0 }, io);
   if (picked === 'skip' || typeof picked === 'object') return 'deny';
   return picked;
-}
-
-/** Synchronously drain any buffered bytes in a readable stream. Used before
- *  opening an interactive prompt so leftover keystrokes from the prior input
- *  cycle don't leak into the new prompt's first readKey. */
-function drainStdin(stream: NodeJS.ReadableStream): void {
-  const s = stream as NodeJS.ReadableStream & { read?: (n?: number) => unknown };
-  if (typeof s.read !== 'function') return;
-  // Drain in a tight loop — read() returns null when buffer is empty
-  for (let i = 0; i < 64; i++) {
-    const chunk = s.read();
-    if (chunk === null || chunk === undefined) break;
-  }
 }
 
 export async function pickOne<T>(
@@ -162,37 +148,67 @@ async function rawModePick<T>(
   input.setRawMode?.(true);
   (input as { resume?: () => void }).resume?.();
 
-  try {
-    for (;;) {
-      const key = await readKey(input);
+  // v0.3.13 fix: process chunks via a pending-keys queue so one 'data' event
+  // carrying multiple keystrokes (e.g. "n\r" from buffered REPL byte + user
+  // Enter) is parsed into individual keys and handled sequentially.
+  return new Promise((resolve, reject) => {
+    let pending: string[] = [];
+    let settled = false;
+    const done = (value: PickOneResult<T>): void => {
+      if (settled) return;
+      settled = true;
+      input.off('data', onData);
+      input.setRawMode?.(false);
+      (input as { pause?: () => void }).pause?.();
+      resolve(value);
+    };
+    const reject2 = (err: Error): void => {
+      if (settled) return;
+      settled = true;
+      input.off('data', onData);
+      input.setRawMode?.(false);
+      (input as { pause?: () => void }).pause?.();
+      reject(err);
+    };
+
+    const processKey = async (key: string): Promise<void> => {
+      if (settled) return;
       if (key === CTRL_C) {
-        if (allowSkip) return 'skip';
-        return items[defaultIdx]!.value;
+        if (allowSkip) { done('skip'); return; }
+        done(items[defaultIdx]!.value);
+        return;
       }
       if ((key === 's' || key === 'S') && allowSkip) {
         unrender();
-        return 'skip';
+        done('skip');
+        return;
       }
       if ((key === 'c' || key === 'C') && allowCustom) {
         unrender();
         input.setRawMode?.(false);
         output.write('  Custom value: ');
-        const custom = (await readLine(input, output)).trim();
-        return { custom };
+        try {
+          const custom = (await readLine(input, output)).trim();
+          done({ custom });
+        } catch (err) {
+          reject2(err as Error);
+        }
+        return;
       }
       if (key === CR || key === LF) {
         unrender();
-        return items[cursor]!.value;
+        done(items[cursor]!.value);
+        return;
       }
-      // Shortcut single-char dispatch (case-insensitive). Must be a single char
-      // (not an escape sequence) and must map to a valid index.
+      // Shortcut single-char dispatch (case-insensitive).
       if (key.length === 1 && key !== CTRL_C) {
         const lc = key.toLowerCase();
         if (Object.prototype.hasOwnProperty.call(shortcuts, lc)) {
           const idx = shortcuts[lc]!;
           if (idx >= 0 && idx < items.length) {
             unrender();
-            return items[idx]!.value;
+            done(items[idx]!.value);
+            return;
           }
         }
       }
@@ -200,27 +216,65 @@ async function rawModePick<T>(
       if (key === ARROW_UP && cursor > 0) { cursor--; moved = true; }
       else if (key === ARROW_DOWN && cursor < items.length - 1) { cursor++; moved = true; }
       if (moved) {
-        // scroll when pageSize < items.length
-        void pageSize; // used implicitly by cursor bounds
+        void pageSize;
         unrender();
         render();
       }
-    }
-  } finally {
-    input.setRawMode?.(false);
-    (input as { pause?: () => void }).pause?.();
-  }
-}
-
-async function readKey(stream: NodeJS.ReadableStream): Promise<string> {
-  return new Promise((resolve) => {
-    const onData = (chunk: Buffer | string): void => {
-      stream.off('data', onData);
-      resolve(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+      // Unknown key → ignore, continue waiting.
     };
-    stream.on('data', onData);
+
+    const drainPending = async (): Promise<void> => {
+      while (pending.length > 0 && !settled) {
+        const k = pending.shift()!;
+        await processKey(k);
+      }
+    };
+
+    const onData = (chunk: Buffer | string): void => {
+      if (settled) return;
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      const keys = parseKeys(text);
+      pending.push(...keys);
+      void drainPending();
+    };
+
+    input.on('data', onData);
   });
 }
+
+/** Split a raw stdin chunk into individual keystroke strings. ANSI escape
+ *  sequences (CSI arrows / function keys) are kept atomic; every other byte
+ *  becomes its own key. Handles the common case where stdin delivers multiple
+ *  keystrokes in one chunk (buffered input + user keystroke). */
+function parseKeys(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === '\x1b' && i + 1 < text.length && text[i + 1] === '[') {
+      // CSI sequence: ESC [ <...> <final byte in 0x40-0x7E>
+      let j = i + 2;
+      while (j < text.length) {
+        const b = text.charCodeAt(j);
+        j++;
+        if (b >= 0x40 && b <= 0x7E) break;
+      }
+      out.push(text.slice(i, j));
+      i = j;
+    } else if (ch === '\x1b') {
+      // Bare ESC (or ESC followed by non-[ — treat as ESC alone, rest as separate)
+      out.push(ch);
+      i++;
+    } else {
+      out.push(ch);
+      i++;
+    }
+  }
+  return out;
+}
+
+// Exported for testing.
+export const __testing = { parseKeys };
 
 async function readLine(
   input: NodeJS.ReadableStream,
