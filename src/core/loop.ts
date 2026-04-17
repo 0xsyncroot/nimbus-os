@@ -85,6 +85,171 @@ export interface ToolExecutor {
 // SPEC-121: budget guard — drop oldest turn pairs when prior messages exceed 70% of context.
 const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
 
+/**
+ * v0.3.16: repair `tool_use` → `tool_result` pairing in the conversation we
+ * replay to the provider. Both Anthropic and OpenAI REJECT requests where
+ * an assistant `tool_use` block has no matching `tool_result` — Anthropic
+ * returns `400 tool_use_id ... was not followed by a tool_result`, OpenAI
+ * returns `400 messages with role 'tool' must be a response to a preceding
+ * message with 'tool_calls'`. The REPL can persist an orphan assistant
+ * turn if the process was killed (Ctrl-C twice, OOM, crash) between
+ * `appendMessage(assistant-with-tool_use)` (loop.ts ~300) and
+ * `appendMessage(user-with-tool_result)` (loop.ts ~519). It can also be
+ * produced by a sub-agent or Telegram channel that abandons a turn.
+ *
+ * This sanitizer runs on every replay:
+ *   1. walk messages left-to-right, track open tool_use ids.
+ *   2. when we see a user `tool_result` block referring to an unknown id,
+ *      drop that block (the tool_use was already cleared somehow).
+ *   3. at the very end, for any still-open ids, inject a synthetic user
+ *      message with `tool_result` stubs (isError:true, content:"interrupted")
+ *      immediately after their parent assistant msg so the pair is closed.
+ *
+ * Mirrors Claude Code's `yieldMissingToolResultBlocks` (src/query.ts:123).
+ *
+ * KEPT PURE: takes and returns a NEW array; never mutates input blocks.
+ * Safe to call repeatedly (idempotent when already-paired).
+ */
+export function sanitizePriorMessages(msgs: CanonicalMessage[]): CanonicalMessage[] {
+  if (msgs.length === 0) return msgs;
+
+  // Pass 1: collect all tool_use ids that appear in assistant messages,
+  // and all tool_result ids that appear in user messages. Detect orphans.
+  const resultIdsSeen = new Set<string>();
+  for (const m of msgs) {
+    if (m.role !== 'user' || typeof m.content === 'string') continue;
+    for (const b of m.content) {
+      if (b.type === 'tool_result') resultIdsSeen.add(b.toolUseId);
+    }
+  }
+
+  // Pass 2: rebuild messages
+  //   - drop tool_result blocks whose id was never emitted by any prior assistant
+  //   - track open tool_use ids; after this pass, for every assistant that
+  //     still has open ids we either (a) merge stubs into the very next user
+  //     message if it is itself a tool_result container, or (b) insert a
+  //     fresh synthetic user message right after the assistant.
+  const emittedIds = new Set<string>();
+  const out: CanonicalMessage[] = [];
+  // assistant index in `out` → ids that have not been paired yet.
+  const pendingByAssistantIdx = new Map<number, string[]>();
+  // assistant index in `out` → index in `out` of the FIRST user-tool_result
+  // message that immediately follows it (only set if that user msg exists
+  // AND carries at least one tool_result block). This is where we prefer
+  // to merge synthetic stubs so the pair stays in the same turn.
+  const followingResultMsgIdx = new Map<number, number>();
+  let lastAssistantIdx = -1;
+
+  for (const m of msgs) {
+    if (typeof m.content === 'string') {
+      out.push(m);
+      lastAssistantIdx = -1;
+      continue;
+    }
+
+    if (m.role === 'assistant') {
+      const kept: CanonicalBlock[] = [];
+      const assistantToolUseIds: string[] = [];
+      for (const b of m.content) {
+        kept.push(b);
+        if (b.type === 'tool_use') {
+          emittedIds.add(b.id);
+          assistantToolUseIds.push(b.id);
+        }
+      }
+      if (kept.length === 0) {
+        // drop empty assistant msg (provider rejects)
+        lastAssistantIdx = -1;
+        continue;
+      }
+      const idx = out.length;
+      out.push({ role: 'assistant', content: kept });
+      if (assistantToolUseIds.length > 0) {
+        pendingByAssistantIdx.set(idx, [...assistantToolUseIds]);
+      }
+      lastAssistantIdx = idx;
+      continue;
+    }
+
+    if (m.role === 'user') {
+      const kept: CanonicalBlock[] = [];
+      let hasToolResultBlock = false;
+      for (const b of m.content) {
+        if (b.type === 'tool_result') {
+          if (!emittedIds.has(b.toolUseId)) {
+            // orphan — drop it (no matching tool_use upstream).
+            continue;
+          }
+          // mark paired: remove from every pending map entry.
+          for (const ids of pendingByAssistantIdx.values()) {
+            const pi = ids.indexOf(b.toolUseId);
+            if (pi >= 0) ids.splice(pi, 1);
+          }
+          kept.push(b);
+          hasToolResultBlock = true;
+        } else {
+          kept.push(b);
+        }
+      }
+      if (kept.length === 0) {
+        // drop empty user msg; do NOT clear lastAssistantIdx — we still
+        // want synthetic stubs to attach to the original assistant.
+        continue;
+      }
+      const userIdx = out.length;
+      out.push({ role: 'user', content: kept });
+      // If this user message immediately follows an assistant and carries
+      // at least one tool_result block, remember it as the merge target.
+      if (hasToolResultBlock && lastAssistantIdx === userIdx - 1) {
+        followingResultMsgIdx.set(lastAssistantIdx, userIdx);
+      }
+      lastAssistantIdx = -1;
+      continue;
+    }
+
+    // system messages (should be built from buildSystemPrompt but defensively preserve)
+    out.push(m);
+    lastAssistantIdx = -1;
+  }
+
+  // Pass 3: close still-pending tool_use ids.
+  //   Preferred: merge synthetic blocks INTO the adjacent user-tool_result
+  //   message (same turn — what the provider expects).
+  //   Fallback: insert a fresh synthetic user message right after the
+  //   assistant. Walk indices in reverse so splicing doesn't shift earlier
+  //   indices.
+  const fallbackEntries: Array<[number, string[]]> = [];
+  for (const [idx, ids] of pendingByAssistantIdx.entries()) {
+    if (ids.length === 0) continue;
+    const targetIdx = followingResultMsgIdx.get(idx);
+    if (targetIdx !== undefined) {
+      const target = out[targetIdx]!;
+      const targetBlocks = Array.isArray(target.content) ? target.content : [];
+      const stubBlocks: CanonicalBlock[] = ids.map((id) => ({
+        type: 'tool_result',
+        toolUseId: id,
+        content: 'tool call interrupted — session resumed without a completed result',
+        isError: true,
+      }));
+      out[targetIdx] = { role: 'user', content: [...targetBlocks, ...stubBlocks] };
+    } else {
+      fallbackEntries.push([idx, ids]);
+    }
+  }
+  fallbackEntries.sort((a, b) => b[0] - a[0]);
+  for (const [idx, ids] of fallbackEntries) {
+    const stubBlocks: CanonicalBlock[] = ids.map((id) => ({
+      type: 'tool_result',
+      toolUseId: id,
+      content: 'tool call interrupted — session resumed without a completed result',
+      isError: true,
+    }));
+    out.splice(idx + 1, 0, { role: 'user', content: stubBlocks });
+  }
+
+  return out;
+}
+
 function trimPriorMessages(
   msgs: CanonicalMessage[],
   maxContextTokens: number,
@@ -140,6 +305,12 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
   let iterations = 0;
   let outcome: 'ok' | 'error' | 'cancelled' = 'ok';
   let errorCode: string | undefined;
+  // v0.3.16: hoisted so the catch block can sweep for orphan tool_use blocks
+  // and persist synthetic tool_result stubs before re-throwing. Without this,
+  // a crash between `conversation.push(assistant)` and
+  // `conversation.push(user-with-tool_result)` would leak an orphan into the
+  // session JSONL, which the NEXT turn then replays → provider 400.
+  const conversation: CanonicalMessage[] = [];
 
   const bus = getGlobalBus();
 
@@ -184,13 +355,20 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
 
     const tools = opts.tools?.listTools();
     const maxCtxTokens = ctx.provider.capabilities().maxContextTokens;
+    // v0.3.16: sanitize BEFORE trim so trim acts on already-paired history.
+    // Sanitize AFTER trim as defense: trim drops from the front in (user,assistant)
+    // pairs, which can strand a tool_result whose matching tool_use just left
+    // or orphan a new-frontier tool_use whose result is still in the trimmed
+    // window. Two passes are idempotent.
     const prior = opts.priorMessages
-      ? trimPriorMessages(opts.priorMessages, maxCtxTokens)
+      ? sanitizePriorMessages(
+          trimPriorMessages(sanitizePriorMessages(opts.priorMessages), maxCtxTokens),
+        )
       : [];
-    const conversation: CanonicalMessage[] = [
+    conversation.push(
       ...prior,
       { role: 'user', content: [{ type: 'text', text: userMessage }] },
-    ];
+    );
 
     // Persist user message
     await appendMessage(ctx.wsId, ctx.sessionId, conversation[0]!, turnId).catch((err) => {
@@ -527,6 +705,51 @@ export async function* runTurn(opts: RunTurnOptions): AsyncGenerator<LoopOutput,
     else outcome = 'error';
     if (err instanceof NimbusError) errorCode = err.code;
     else errorCode = classify(err);
+
+    // v0.3.16: close any orphan tool_use left on disk. Without this, the
+    // session JSONL persists an assistant message with `tool_use` blocks
+    // that never get a matching `tool_result`, and the NEXT REPL turn
+    // replays it → provider returns 400. Walk `conversation` (in-memory
+    // snapshot of everything the turn pushed this iteration) and write
+    // synthetic tool_result stubs for every un-answered id. Safe in the
+    // common case because when the turn completes normally we push the
+    // result blocks at loop.ts ~643 before reaching this catch.
+    try {
+      const openToolUseIds: string[] = [];
+      const paired = new Set<string>();
+      for (const m of conversation) {
+        if (typeof m.content === 'string') continue;
+        if (m.role === 'assistant') {
+          for (const b of m.content) {
+            if (b.type === 'tool_use') openToolUseIds.push(b.id);
+          }
+        } else if (m.role === 'user') {
+          for (const b of m.content) {
+            if (b.type === 'tool_result') paired.add(b.toolUseId);
+          }
+        }
+      }
+      const unpaired = openToolUseIds.filter((id) => !paired.has(id));
+      if (unpaired.length > 0) {
+        const stubMsg: CanonicalMessage = {
+          role: 'user',
+          content: unpaired.map((id) => ({
+            type: 'tool_result',
+            toolUseId: id,
+            content: outcome === 'cancelled'
+              ? 'tool call cancelled by user (Ctrl-C)'
+              : `tool call failed before completion: ${errorCode ?? 'unknown'}`,
+            isError: true,
+          })),
+        };
+        await appendMessage(ctx.wsId, ctx.sessionId, stubMsg, turnId, {
+          isTurnBoundary: true,
+        }).catch(() => undefined);
+      }
+    } catch {
+      // best-effort; never let sanitizer raise over the original error.
+    }
+
     const metric: TurnMetric = {
       turnId,
       sessionId: ctx.sessionId,

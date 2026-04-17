@@ -157,18 +157,21 @@ export const CANCEL_ESCALATION_WINDOW_MS = 1500
 
 ## 8. Files Touched
 
-- `src/core/loop.ts` (new, ~180 LoC)
+- `src/core/loop.ts` (new, ~180 LoC; v0.3.16 +~140 LoC `sanitizePriorMessages`)
 - `src/core/cancellation.ts` (new, ~60 LoC)
 - `src/core/turn.ts` (new, ~40 LoC — types only)
 - `tests/core/loop.test.ts` (new, ~200 LoC)
 - `tests/core/cancellation.test.ts` (new, ~80 LoC)
+- `tests/core/sanitizePriorMessages.test.ts` (v0.3.16)
+- `tests/core/loopSanitize.test.ts` (v0.3.16)
 
 ## 9. Open Questions
 
-- [ ] Escalation window duration: 1.5s feels tight on slow terminals. Benchmark in v0.2 UX pass.
-- [ ] Should iteration cap be user-configurable via `config.json`? Default fixed 30; revisit v0.2 after observing usage.
+- [ ] Escalation window: 1.5s feels tight on slow terminals. Benchmark v0.2.
+- [ ] Iteration cap user-configurable? Default 30; revisit v0.2.
 
 ## 10. Changelog
 
 - 2026-04-15 @hiepht: draft initial v0.1.0
 - 2026-04-15 @hiepht: revise — align `TurnMetric.outcome='cancelled'` with SPEC-601; add `'ws'` channel; switch iteration cap to `T_ITERATION_CAP` and breaker-open to `Y_CIRCUIT_BREAKER_OPEN` (both added to META-003)
+- 2026-04-17 @hiepht: v0.3.16 — add `sanitizePriorMessages()` + catch-block stub. Fixes `P_INVALID_REQUEST 400` on replay of orphan tool_use. See CHANGELOG v0.3.16.

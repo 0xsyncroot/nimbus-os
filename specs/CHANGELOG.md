@@ -2,6 +2,66 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-17 — v0.3.16-alpha URGENT: orphan tool_use sanitizer (fix P_INVALID_REQUEST 400 on replay)
+
+- @hiepht: **Symptom** — user on v0.3.15 reported every REPL turn failing
+  with `P_INVALID_REQUEST {status:400}` after typing `tiếp tục thử lại`.
+  The turn never reached a tool call — provider rejected the request
+  itself. v0.3.15 diff was picker-only (no provider/IR/loop changes), so
+  the regression was NOT in v0.3.15 — it was a pre-existing latent bug
+  surfaced because v0.3.14's picker UX had prevented the user from
+  completing tool confirms cleanly, leaving the session JSONL with
+  orphan `tool_use` blocks (assistant messages with `tool_use` but no
+  matching `tool_result`).
+- @hiepht: **Root cause** — both Anthropic and OpenAI REJECT any
+  request where an assistant `tool_use` block has no matching
+  `tool_result`. runTurn's existing executor pairs them mid-turn, but
+  if the process dies, is killed (Ctrl-C x2), or aborts between
+  `appendMessage(assistant-tool_use)` (loop.ts ~300) and
+  `appendMessage(user-tool_result)` (loop.ts ~519), the JSONL persists
+  an orphan. Every subsequent REPL boot rehydrates that orphan via
+  `loadSession` → `priorMessages` → provider 400.
+- @hiepht: **Fix (two layers, defense-in-depth)** —
+  * `sanitizePriorMessages()` in `src/core/loop.ts`: runs BEFORE + AFTER
+    `trimPriorMessages` on every turn's `priorMessages`. Walks the
+    message list, tracks emitted `tool_use` ids, pairs them with
+    `tool_result` blocks, and for any still-open id synthesises a
+    `tool_result` stub (`isError:true`, content = "tool call
+    interrupted — session resumed without a completed result").
+    Preferred behaviour: merge stubs INTO the adjacent user-tool_result
+    message (same turn — provider expects back-to-back). Fallback:
+    insert a fresh synthetic user message right after the assistant.
+    Also drops orphan `tool_result` blocks (no matching upstream
+    `tool_use`) and empty assistant messages. Idempotent, pure (never
+    mutates input).
+  * `runTurn` catch block now scans the in-memory `conversation` for
+    any orphan `tool_use` ids and persists a stub `tool_result` user
+    message BEFORE re-throwing. Closes the write-crash window so
+    future replays start clean.
+- @hiepht: **Industry pattern** — mirrors Claude Code's
+  `yieldMissingToolResultBlocks` (src/query.ts:123) which is invoked
+  from THREE places in their turn loop: after model error (query.ts:984),
+  after image error, and on abort (query.ts:1025). We do the
+  equivalent on REPLAY + on crash catch — same contract, different
+  insertion points because our loop persists eagerly whereas Claude
+  Code streams.
+- @hiepht: **Tests** —
+  * `tests/core/sanitizePriorMessages.test.ts` — 10 unit cases
+    (empty, paired, orphan-at-end, orphan-in-middle, parallel orphans,
+    dropped orphan tool_result, partial pairing, idempotence,
+    immutability, empty-assistant drop).
+  * `tests/core/loopSanitize.test.ts` — end-to-end: inject orphan
+    priorMessages, capture provider request with mock, assert the
+    request seen by provider has the synthetic stub + user message
+    paired correctly. Also asserts a fully-paired history passes
+    through untouched (no regression on happy path).
+- @hiepht: **Not a v0.3.15 regression** — the picker fix was correct
+  and remains. The 400 is a latent bug from any prior version
+  (v0.1.0-alpha onward) that produced orphan tool_use on any
+  cancellation/crash scenario, finally triggered by the user's prior
+  picker-driven aborts.
+- @hiepht: Full test suite: 1990 pass, 0 fail. Typecheck clean.
+
 ## 2026-04-17 — v0.3.15-alpha URGENT: picker priming window against phantom keypress (5th regression)
 
 - @hiepht: **Root cause (finally)** — the fifth picker regression (v0.3.10 →
