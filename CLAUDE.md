@@ -127,9 +127,16 @@ Rule: Opus only where judgment/synthesis is load-bearing. Developers default to 
 11. Developers write impl + tests in the same commit as the spec (SDD: spec+code atomic).
 12. Each developer runs `bun test` + `bun run typecheck` + `bun run spec validate` before signaling done.
 
-**Phase 5 — QA (qa-engineer, Sonnet)**
-13. QA compiles the binary (`bun run compile:linux-x64`) and smoke-tests the user flow end-to-end. **Unit tests are not enough** — binary smoke catches config-loading, env-priority, path resolution, and cross-platform bugs.
-14. If a failure is found → team-lead reproduces locally first (don't round-trip on misdiagnosis) → assigns a **concrete fix** to the responsible developer.
+**Phase 5 — QA (qa-engineer, Sonnet) — 4-smoke protocol (MANDATORY before tag)**
+
+QA must run all 4 smokes on the compiled binary. Unit tests DO NOT substitute for any of the 4 — each caught a real regression that unit tests missed:
+
+1. **PTY REPL smoke** — compile `nimbus-linux-x64`, spawn inside a real PTY (`node-pty` or `script -q`), drive tool-confirm flow with multi-byte Vietnamese input. Catches stdin-byte-bleed between autocomplete → picker (v0.3.10–15 shipped 5 consecutive regressions that unit tests with synthetic streams missed).
+2. **Real Telegram smoke** — configure a test bot token + allowlist, send a message that triggers a confirm tool, verify inline_keyboard (Yes/Always/No) renders + callback_query round-trip + `editMessageReplyMarkup` clears buttons. Catches wiring gaps between `core/channelPorts` and `telegram/uiHost`.
+3. **Vault upgrade smoke** — existing workspace with `secrets.enc` + a stored API key, binary swap to new version, open new shell WITHOUT `NIMBUS_VAULT_PASSPHRASE`, confirm key is still accessible. Catches any `.vault-key` / passphrase regression (v0.3.6 shipped a silent-clobber that permanently locked users out — HARD RULE §10 encoded after that).
+4. **3-OS binary smoke via CD** — tag triggers `.github/workflows/release.yml` which compiles all 5 targets and runs the binary. Catches POSIX-vs-Windows path resolution, encoding, CRLF bugs that Linux-only local tests miss.
+
+If ANY smoke fails → team-lead reproduces locally first (don't round-trip on misdiagnosis) → assigns a **concrete fix** to the responsible developer. Never tag with a known-failing smoke.
 
 **Fix brief template (use verbatim when assigning)**:
 - Ticket ID + reproduction steps exactly as QA ran them

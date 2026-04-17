@@ -4,7 +4,39 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
-## [0.3.7-alpha] — 2026-04-16 — URGENT fix (binary upgrade silently locks existing vault → misleading "no key" error)
+## [0.3.18-alpha] — 2026-04-17 — UI refactor Option X (multi-channel UIHost, no Ink) + 3 CI fixes
+
+**Why**: v0.3.10–15 shipped 5 consecutive picker regressions from stdin-byte-bleed between autocomplete and confirm. 4-Opus-expert research concluded: keep the v0.3.15 drain+priming picker, but lift UI behind a channel-agnostic `UIHost` port so Telegram/web/Slack can attach the same intent contract without each re-implementing inline buttons. Rejected a full Ink port (~4500 LoC + 15 npm deps, would not solve the stdin-ownership bug). Total change: ~800 LoC across 4 specs, 0 Ink, 0 new deps.
+
+### Added (UI refactor — SPEC-830/831/832/833)
+
+- **SPEC-830 UIHost intent contract** (`src/core/ui/`) — `UIIntent` discriminated union `confirm|pick|input|status`, `UIContext`, `UIResult<T>` with `ok|cancel|timeout`. `NullUIHost` sentinel for non-interactive runs. Pure types, no platform deps.
+- **SPEC-831 Telegram UIHost** (`src/channels/telegram/uiHost.ts`) — revives the dead `approval.ts` that was being built but never wired. `sendToChatWithId` + `editMessageReplyMarkup` + pending-approvals map keyed by `correlationId`, 5-min TTL, `AbortSignal` support. `buildApprovalKeyboard(id, {includeAlways})` returns 3 buttons (Yes / Always / No); `parseApprovalCallback` returns `{requestId, decision}`. Tool-confirm now renders as an inline keyboard in the Telegram chat instead of the dead-end "No onAsk for Telegram channel — future" path.
+- **SPEC-832 CLI UIHost** (`src/channels/cli/ui/cliHost.ts`) — adapter only, wraps existing `confirmPick`/`pickOne` from `onboard/picker.ts`. Keeps v0.3.15 drain+priming byte-bleed protection. Single stdin-owner lock (throws `U_UI_BUSY` on concurrent `ask()`). Secret-mode input echo-off.
+- **SPEC-833 layer enforcement** (`eslint.config.js` + `scripts/lint/layerRules.ts`) — ESLint flat config with `import/no-restricted-paths` encoding META-001 §2.2 DAG. Caught + fixed 2 V1 violations: `tools/builtin/Telegram.ts` imported `channels/` directly → now imports `core/channelPorts.ts` (abstract port); `tools/todoWriteTool.ts` imported `channels/` for ANSI render → now returns plain text.
+- `ErrorCode.U_UI_BUSY` — emitted when `UIHost.ask()` is called while another intent is pending (CLI has single stdin owner).
+
+### Changed
+
+- `src/tools/loopAdapter.ts` — `LoopAdapterOptions` now accepts `host?: UIHost & { canAsk(): boolean }`. When `host.canAsk()` returns `true`, the adapter prefers `host.ask()` over legacy `onAsk`; falls back to `onAsk` otherwise. Maps `'never'` / `'cancel'` → `'deny'` so the tool result surface is unchanged.
+- `src/channels/cli/repl.ts` — creates `cliUIHost` at REPL startup, wires into `createLoopAdapter({host, onAsk})`. Legacy `makeOnAsk` kept as deprecated fallback for one release.
+- `src/channels/runtime.ts` — `TelegramHandle` carries `allowedUserIds`; `handleInbound` creates a fresh `TelegramUIHost` per turn + wires `onAsk`. Removed the "No onAsk for Telegram channel — future" dead comment.
+
+### Fixed (CI unblock — pre-existing 3-OS failures surfaced by SPEC-833 eslint zone)
+
+- **SPEC-804 HMAC OAuth state (security, macOS-only flake was masking a real hole)** — `verifyOAuthState` decoded base64url MACs to bytes before `timingSafeEqual`. A 32-byte HMAC encodes to a 43-char base64url string whose last char carries only 4 real bits + 2 padding bits; flipping the trailing char to one of 15 siblings (e.g., `Y`→`a`) decodes to the SAME 32 bytes → `valid: true`. An attacker with a valid state could submit ~15 non-canonical MAC variants and all would be accepted — CSRF MAC malleability. Fix: compare base64url STRINGS constant-time (expected is always canonical, so any byte-level tampering fails). +regression test brute-forces a Y→a collision and asserts rejection. Commit `ec1654e`.
+- **Spec validator exit code (Ubuntu)** — `bun run spec validate` returned 1 on 8 legitimate draft-stage specs because rule-6 required all 6 sections on every status. Fixed: drafts only need `outcomes` (or `purpose` for META); approved/in-progress/implemented still require all 6. Renamed `SPEC-806r` → `SPEC-809` (the `r`-suffix broke the id regex and was silently dropped from validation). Updated 2 inbound refs + SPEC-911 atomically. Commit `94ac8d3`.
+- **SPEC-833 layer tests (Windows)** — `tests/lint/layerRules.test.ts` used `new URL('...', import.meta.url).pathname` to locate source files. On Windows this yields `/C:/Users/.../file.ts` which `Bun.file()` cannot resolve → `.text()` returned empty, tests failed. Fix: `fileURLToPath` from `node:url` converts URL → OS-native path on all 3 platforms. Commit `2649596`.
+
+### Deprecated
+
+- `makeOnAsk(...)` in `channels/cli/repl.ts` — kept one release for safety; will be removed in v0.3.19 when `UIHost` is the only path.
+
+### Security
+
+- SPEC-804 HMAC fix is a real security improvement, not just a flake fix. Attackers with a valid OAuth state could previously generate ~15 accepted MAC variants via base64url padding-bit malleability. Upgrade recommended for any installation that has Slack OAuth configured.
+
+
 
 User repro (v0.3.6 → new shell):
 
