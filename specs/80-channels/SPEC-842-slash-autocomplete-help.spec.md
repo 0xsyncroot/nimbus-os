@@ -1,8 +1,8 @@
 ---
 id: SPEC-842
 title: Slash autocomplete dropdown and /help overlay
-status: draft
-version: 0.1.0
+status: approved
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
@@ -10,11 +10,12 @@ release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840]
 blocks: []
-estimated_loc: 300
+estimated_loc: 360
 files_touched:
   - src/channels/cli/ink/components/SlashAutocomplete.tsx
   - src/channels/cli/ink/components/HelpOverlay.tsx
   - src/channels/cli/ink/components/FileRefAutocomplete.tsx
+  - src/channels/cli/ink/utils/commandSuggestions.ts
   - tests/channels/cli/ink/autocomplete.test.ts
 ---
 
