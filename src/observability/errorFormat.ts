@@ -132,6 +132,40 @@ export function formatError(err: NimbusError): FormattedError {
       };
     }
 
+    case ErrorCode.U_UI_BUSY:
+      return {
+        summary: 'UI is busy.',
+        // VI: "Giao diện đang bận."
+        action: 'Wait for the current operation to complete.',
+        // VI hint: "Vui lòng chờ thao tác hiện tại hoàn thành."
+      };
+
+    case ErrorCode.U_UI_CANCELLED:
+      return {
+        summary: 'Action cancelled.',
+        // VI: "Đã huỷ."
+        action: '',
+      };
+
+    case ErrorCode.P_KEYBIND_RESERVED: {
+      const key = typeof err.context['key'] === 'string' ? (err.context['key'] as string) : 'that key';
+      return {
+        summary: 'That shortcut is reserved.',
+        // VI: "Phím tắt này được giữ cố định."
+        action: `The key "${key}" is reserved by nimbus. Choose a different binding.`,
+      };
+    }
+
+    case ErrorCode.P_OPERATION_DENIED:
+      return {
+        summary: 'Operation not allowed.',
+        // VI: "Thao tác không được phép."
+        action:
+          typeof err.context['reason'] === 'string'
+            ? (err.context['reason'] as string)
+            : 'This operation is not permitted in the current context.',
+      };
+
     case ErrorCode.U_BAD_COMMAND: {
       const reason = err.context['reason'];
       if (reason === 'workspace_exists') {

@@ -1,7 +1,7 @@
 ---
 id: META-012
 title: UI error codes extension — U_UI_BUSY through P_OPERATION_DENIED
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
@@ -115,11 +115,24 @@ export enum ErrorCode {
 - `src/i18n/messages/vi.ts` (amend, ~+8 LoC)
 - `tests/observability/errors.test.ts` (amend, ~+20 LoC)
 
-## 9. Open Questions
+## 9. Consumers
+
+- `SPEC-852` — `<ErrorDialog>` renders localized strings for `U_UI_BUSY`, `P_KEYBIND_RESERVED`, `P_OPERATION_DENIED`.
+- `SPEC-849` — keybinding manager throws `P_KEYBIND_RESERVED` on reserved-chord conflicts.
+- `src/observability/errorFormat.ts` — formats all four codes for CLI stderr output.
+- Any UI component needing to signal "operation in progress" should use `U_UI_BUSY`; cancellation flows use `U_UI_CANCELLED`.
+
+## 10. Evolution Policy
+
+- Existing codes (`U_UI_BUSY`, `U_UI_CANCELLED`, `P_KEYBIND_RESERVED`, `P_OPERATION_DENIED`) are **stable** — string keys must not change after v0.4.0-alpha (downstream consumers hard-code them per META-003 §5).
+- To add new UI error codes: extend this spec and submit a new row in the task breakdown. Do not add codes directly to `errors.ts` without a spec update.
+- If `isRetryable` or `isUserFacing` semantics need to change for these codes, update this spec's §5 acceptance criteria in the same commit.
+
+## 11. Open Questions
 
 - [ ] Should `U_UI_BUSY` be retryable with backoff in future? (current: no; defer to v0.4.1 if use-case emerges)
 - [ ] Add `U_*` family to self-heal policy matrix in META-003? (yes — add note in META-003 §2.3 in same commit)
 
-## 10. Changelog
+## 12. Changelog
 
 - 2026-04-17 @hiepht: draft created (Phase 3 gap — `U_UI_BUSY` existed in SPEC-832 impl but no spec; 3 other codes identified by reviewer-architect)

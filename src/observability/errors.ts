@@ -39,7 +39,12 @@ export enum ErrorCode {
   // User (U*)
   U_BAD_COMMAND = 'U_BAD_COMMAND',
   U_MISSING_CONFIG = 'U_MISSING_CONFIG',
-  U_UI_BUSY = 'U_UI_BUSY',
+  U_UI_BUSY = 'U_UI_BUSY',            // UI occupied, cannot accept input
+  U_UI_CANCELLED = 'U_UI_CANCELLED',  // User cancelled a pending UI operation
+
+  // Platform / Permission UI extensions (P* additions — per META-012)
+  P_KEYBIND_RESERVED = 'P_KEYBIND_RESERVED',  // Chord conflicts with reserved binding
+  P_OPERATION_DENIED = 'P_OPERATION_DENIED',  // UI permission denied (alt-screen, modal, etc.)
 
   // System (Y*)
   Y_OOM = 'Y_OOM',
@@ -95,6 +100,10 @@ const USER_FACING_CODES = new Set<ErrorCode>([
   ErrorCode.T_PERMISSION,
   ErrorCode.U_BAD_COMMAND,
   ErrorCode.U_MISSING_CONFIG,
+  ErrorCode.U_UI_BUSY,
+  // U_UI_CANCELLED intentionally omitted — silent discard, no user message needed
+  ErrorCode.P_KEYBIND_RESERVED,
+  ErrorCode.P_OPERATION_DENIED,
   ErrorCode.S_CONFIG_INVALID,
   ErrorCode.X_BASH_BLOCKED,
   ErrorCode.X_PATH_BLOCKED,
