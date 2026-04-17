@@ -283,17 +283,17 @@
 |----|-------|--------|------|---------|
 | SPEC-840 | Ink 7 app bootstrap, theme tokens, base components | implemented | META-001, META-010, META-011 | 450 |
 | SPEC-841 | Multi-line PromptInput with paste preservation | implemented | META-011, SPEC-840, SPEC-850 | 500 |
-| SPEC-842 | Slash autocomplete dropdown and /help overlay | draft | META-011, SPEC-840 | 300 |
+| SPEC-842 | Slash autocomplete dropdown and /help overlay | approved | META-011, SPEC-840 | 360 |
 | SPEC-843 | Streaming output render with spinner and markdown cache | implemented | META-011, SPEC-840 | 400 |
 | SPEC-844 | StructuredDiff colored unified diff for Write and Edit tools | approved | META-011, SPEC-840 | 200 |
 | SPEC-845 | Collapsed Read/Search coalescing and background task progress | draft | META-011, SPEC-843 | 150 |
-| SPEC-846 | PermissionDialog and per-tool request components | draft | META-011, SPEC-840, SPEC-830, SPEC-844 | 500 |
+| SPEC-846 | PermissionDialog and per-tool request components | implemented | META-011, SPEC-840, SPEC-830, SPEC-844 | 500 |
 | SPEC-847 | Modal panels with alt-screen takeover for 8 slash commands | draft | META-011, SPEC-840, SPEC-842, SPEC-849 | 350 |
 | SPEC-848 | StatusLine, PromptInputFooter, and TaskListV2 components | approved | META-011, SPEC-840 | 300 |
 | SPEC-849 | Meta-UX helpers and keybinding manager | approved | META-009, META-011, META-012, SPEC-840 | 250 |
 | SPEC-851 | repl.ts Ink integration glue — startRepl entry point | draft | META-011, SPEC-840, SPEC-841, SPEC-842, SPEC-848 | 200 |
-| SPEC-852 | inline-error-dialog — Ink ErrorDialog replaces raw JSON errors | draft | META-011, SPEC-840, META-012 | 120 |
-| SPEC-853 | welcome-byline — Ink Welcome replaces welcome.ts + mascot.ts | draft | META-011, SPEC-840 | 80 |
+| SPEC-852 | inline-error-dialog — Ink ErrorDialog replaces raw JSON errors | approved | META-011, SPEC-840, META-012 | 120 |
+| SPEC-853 | welcome-byline — Ink Welcome replaces welcome.ts + mascot.ts | implemented | META-011, SPEC-840 | 80 |
 | SPEC-855 | ink-onboarding-rewrite — nimbus init wizard in Ink (7-step) | draft | META-011, SPEC-840, SPEC-841, SPEC-850 | 350 |
 
 ### core
@@ -311,7 +311,7 @@
 
 | ID | Title | Status | Deps | Est LoC |
 |----|-------|--------|------|---------|
-| SPEC-854 | locale-policy — all user strings through t(key, locale) | draft | META-011, SPEC-180 | 100 |
+| SPEC-854 | locale-policy — all user strings through t(key, locale) | approved | META-011, SPEC-180 | 100 |
 
 ### onboard
 

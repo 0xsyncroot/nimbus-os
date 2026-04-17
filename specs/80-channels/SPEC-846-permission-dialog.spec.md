@@ -1,11 +1,11 @@
 ---
 id: SPEC-846
 title: PermissionDialog and per-tool request components
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
-updated: 2026-04-17
+updated: 2026-04-17T10:00:00Z
 release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840, SPEC-830, SPEC-844]
@@ -170,3 +170,4 @@ export function PermissionRequest(props: PermissionDialogProps): React.ReactElem
 
 - 2026-04-17 @hiepht: draft created by spec-writer-dialogs; synthesized from META-011 Phase D + Claude Code permissions reference
 - 2026-04-17 @hiepht: Phase 3 revisions — UIIntent.permission variant added (extends SPEC-830); SPEC-844 dep added; Bash prefix safety rules (META-009 T23); ANSI-OSC strip guard (META-009 T22); border constants pinned; label word order fixed; LoC budget bumped 350→500; SedEdit/Notebook deferral noted in Open Questions.
+- 2026-04-17 @hiepht: implemented — PermissionDialog + 8 per-tool components (Bash/FileWrite/FileEdit/WebFetch/Skill/ExitPlanMode + SedEdit/NotebookEdit stubs). UIIntent.permission + PermissionResponse types in SPEC-830 intent.ts. T_NOT_IMPLEMENTED added to ErrorCode. 59 tests green.

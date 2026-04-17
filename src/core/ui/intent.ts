@@ -12,7 +12,13 @@ export type UIIntent =
   | { kind: 'confirm'; prompt: string; defaultValue?: boolean; timeoutMs?: number }
   | { kind: 'pick'; prompt: string; options: Array<{ id: string; label: string; hint?: string }> }
   | { kind: 'input'; prompt: string; secret?: boolean; placeholder?: string }
-  | { kind: 'status'; message: string; level: 'info' | 'warn' | 'error' };
+  | { kind: 'status'; message: string; level: 'info' | 'warn' | 'error' }
+  // SPEC-846: permission intent — dispatches to <PermissionRequest> in CLI UIHost.
+  // allowAlways=false suppresses "Yes, and don't ask again" (META-009 T23 unsafe prefix).
+  | { kind: 'permission'; toolName: string; detail: string; allowAlways: boolean };
+
+// UIResult value for 'permission' kind — narrowed to the 3 response options.
+export type PermissionResponse = 'allow' | 'always' | 'deny';
 
 // ---------------------------------------------------------------------------
 // UIContext — per-turn request context; channel-agnostic.
@@ -71,11 +77,19 @@ export const uiIntentStatusSchema = z.object({
   level: z.enum(['info', 'warn', 'error']),
 });
 
+export const uiIntentPermissionSchema = z.object({
+  kind: z.literal('permission'),
+  toolName: z.string().min(1),
+  detail: z.string(),
+  allowAlways: z.boolean(),
+});
+
 export const uiIntentSchema = z.discriminatedUnion('kind', [
   uiIntentConfirmSchema,
   uiIntentPickSchema,
   uiIntentInputSchema,
   uiIntentStatusSchema,
+  uiIntentPermissionSchema,
 ]);
 
 // ---------------------------------------------------------------------------
