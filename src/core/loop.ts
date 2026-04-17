@@ -110,6 +110,18 @@ const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
  * KEPT PURE: takes and returns a NEW array; never mutates input blocks.
  * Safe to call repeatedly (idempotent when already-paired).
  */
+/** Find the assistant output-index that owns a given tool_use id
+ *  (the one still waiting for a tool_result). Returns -1 if none. */
+function findOwner(
+  pending: Map<number, string[]>,
+  id: string,
+): number {
+  for (const [idx, ids] of pending.entries()) {
+    if (ids.includes(id)) return idx;
+  }
+  return -1;
+}
+
 export function sanitizePriorMessages(msgs: CanonicalMessage[]): CanonicalMessage[] {
   if (msgs.length === 0) return msgs;
 
@@ -178,6 +190,20 @@ export function sanitizePriorMessages(msgs: CanonicalMessage[]): CanonicalMessag
         if (b.type === 'tool_result') {
           if (!emittedIds.has(b.toolUseId)) {
             // orphan — drop it (no matching tool_use upstream).
+            continue;
+          }
+          // v0.3.17: DISPLACED tool_result — if the matching tool_use's
+          // assistant is NOT the most recent assistant (something inserted
+          // a non-tool_result user message between them), drop the block
+          // here. Pass 3 will synthesize a stub right after the tool_use so
+          // the adjacency invariant holds for the provider.
+          const ownerIdx = findOwner(pendingByAssistantIdx, b.toolUseId);
+          if (ownerIdx !== -1 && ownerIdx !== lastAssistantIdx) {
+            // Don't keep this tool_result — the paired assistant is not
+            // adjacent. Remove from pending to let the stub NOT fire (we
+            // keep the ORIGINAL content) OR synthesize stub. Simpler: drop
+            // here, leave pending in map, Pass 3 inserts stub with real-ish
+            // content so the agent still sees something.
             continue;
           }
           // mark paired: remove from every pending map entry.
