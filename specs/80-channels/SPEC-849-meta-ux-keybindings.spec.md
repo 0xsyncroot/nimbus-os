@@ -1,8 +1,8 @@
 ---
 id: SPEC-849
 title: Meta-UX helpers and keybinding manager
-status: draft
-version: 0.1.0
+status: approved
+version: 0.2.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
@@ -19,6 +19,7 @@ files_touched:
   - src/channels/cli/ink/keybindings/defaultBindings.ts
   - src/channels/cli/ink/keybindings/resolver.ts
   - src/channels/cli/ink/keybindings/reservedShortcuts.ts
+  - src/channels/cli/ink/keybindings/userOverrides.ts
   - tests/channels/cli/ink/meta-ux.test.ts
 ---
 

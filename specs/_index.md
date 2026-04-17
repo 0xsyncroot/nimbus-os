@@ -14,7 +14,7 @@
 | META-009 | Threat model — attack vectors + mitigations | approved | 2026-04-15 |
 | META-010 | Naming conventions — files, identifiers, specs, commits | approved | 2026-04-15 |
 | META-011 | v0.4 CLI UI architecture — Ink port umbrella | draft | 2026-04-17 |
-| META-012 | UI error codes extension — U_UI_BUSY through P_OPERATION_DENIED | draft | 2026-04-17 |
+| META-012 | UI error codes extension — U_UI_BUSY through P_OPERATION_DENIED | implemented | 2026-04-17 |
 
 ## v0.1 Feature Specs (34 total)
 
@@ -281,16 +281,16 @@
 
 | ID | Title | Status | Deps | Est LoC |
 |----|-------|--------|------|---------|
-| SPEC-840 | Ink 7 app bootstrap, theme tokens, base components | draft | META-001, META-010, META-011 | 450 |
-| SPEC-841 | Multi-line PromptInput with paste preservation | draft | META-011, SPEC-840, SPEC-850 | 500 |
+| SPEC-840 | Ink 7 app bootstrap, theme tokens, base components | implemented | META-001, META-010, META-011 | 450 |
+| SPEC-841 | Multi-line PromptInput with paste preservation | implemented | META-011, SPEC-840, SPEC-850 | 500 |
 | SPEC-842 | Slash autocomplete dropdown and /help overlay | draft | META-011, SPEC-840 | 300 |
-| SPEC-843 | Streaming output render with spinner and markdown cache | draft | META-011, SPEC-840 | 400 |
-| SPEC-844 | StructuredDiff colored unified diff for Write and Edit tools | draft | META-011, SPEC-840 | 200 |
+| SPEC-843 | Streaming output render with spinner and markdown cache | implemented | META-011, SPEC-840 | 400 |
+| SPEC-844 | StructuredDiff colored unified diff for Write and Edit tools | approved | META-011, SPEC-840 | 200 |
 | SPEC-845 | Collapsed Read/Search coalescing and background task progress | draft | META-011, SPEC-843 | 150 |
 | SPEC-846 | PermissionDialog and per-tool request components | draft | META-011, SPEC-840, SPEC-830, SPEC-844 | 500 |
 | SPEC-847 | Modal panels with alt-screen takeover for 8 slash commands | draft | META-011, SPEC-840, SPEC-842, SPEC-849 | 350 |
-| SPEC-848 | StatusLine, PromptInputFooter, and TaskListV2 components | draft | META-011, SPEC-840 | 300 |
-| SPEC-849 | Meta-UX helpers and keybinding manager | draft | META-009, META-011, META-012, SPEC-840 | 250 |
+| SPEC-848 | StatusLine, PromptInputFooter, and TaskListV2 components | approved | META-011, SPEC-840 | 300 |
+| SPEC-849 | Meta-UX helpers and keybinding manager | approved | META-009, META-011, META-012, SPEC-840 | 250 |
 | SPEC-851 | repl.ts Ink integration glue — startRepl entry point | draft | META-011, SPEC-840, SPEC-841, SPEC-842, SPEC-848 | 200 |
 | SPEC-852 | inline-error-dialog — Ink ErrorDialog replaces raw JSON errors | draft | META-011, SPEC-840, META-012 | 120 |
 | SPEC-853 | welcome-byline — Ink Welcome replaces welcome.ts + mascot.ts | draft | META-011, SPEC-840 | 80 |
@@ -317,7 +317,7 @@
 
 | ID | Title | Status | Deps | Est LoC |
 |----|-------|--------|------|---------|
-| SPEC-850 | keyPromptCore — non-Ink pre-Ink key input pathway | draft | META-011, SPEC-151 | 80 |
+| SPEC-850 | keyPromptCore — non-Ink pre-Ink key input pathway | implemented | META-011, SPEC-151 | 80 |
 
 ### tools
 
