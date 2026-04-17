@@ -10,6 +10,7 @@ import type {
   ToolResult as LoopToolResult,
 } from '../core/loop.ts';
 import type { ToolDefinition } from '../ir/types.ts';
+import type { UIHost } from '../core/ui/index.ts';
 import type { ToolRegistry } from './registry.ts';
 import { createExecutor } from './executor.ts';
 
@@ -28,6 +29,11 @@ export interface LoopAdapterOptions {
    *  - 'deny'   → return T_PERMISSION:user_denied synthetic result
    *  When undefined, the original needs_confirm error is returned (non-interactive path). */
   onAsk?: (inv: LoopToolInvocation) => Promise<'allow' | 'deny' | 'always'>;
+  /** SPEC-832: optional UIHost for routing confirm prompts through the UIHost contract.
+   *  When provided AND host.canAsk()===true, prefer host.ask() over onAsk for
+   *  needs_confirm decisions. Falls back to onAsk when host.canAsk()===false or
+   *  when host is not provided. */
+  host?: UIHost & { canAsk(): boolean };
 }
 
 /** SPEC-825: derive the session-scoped allow key for rememberAllow.
@@ -100,9 +106,30 @@ export function createLoopAdapter(opts: LoopAdapterOptions): LoopToolExecutor {
     async execute(inv: LoopToolInvocation, signal: AbortSignal): Promise<LoopToolResult> {
       const firstResult = await runOnce(inv, signal);
 
-      // SPEC-825: if gate returned 'ask' (needs_confirm) and onAsk is provided, prompt.
-      if (isNeedsConfirm(firstResult) && opts.onAsk) {
-        const decision = await opts.onAsk(inv);
+      // SPEC-832: prefer host.ask() when provided and canAsk(); fall back to onAsk.
+      const askFn: ((inv: LoopToolInvocation) => Promise<'allow' | 'deny' | 'always'>) | undefined =
+        (opts.host && opts.host.canAsk())
+          ? async (toolInv: LoopToolInvocation) => {
+              const ctx = {
+                turnId: toolInv.toolUseId,
+                correlationId: toolInv.toolUseId,
+                channelId: 'cli' as const,
+                abortSignal: signal,
+              };
+              const result = await opts.host!.ask<'allow' | 'deny' | 'always' | 'never'>(
+                { kind: 'confirm', prompt: `Allow tool: ${toolInv.name}?` },
+                ctx,
+              );
+              if (result.kind !== 'ok') return 'deny';
+              const v = result.value;
+              if (v === 'never') return 'deny';
+              return v;
+            }
+          : opts.onAsk;
+
+      // SPEC-825: if gate returned 'ask' (needs_confirm) and askFn is provided, prompt.
+      if (isNeedsConfirm(firstResult) && askFn) {
+        const decision = await askFn(inv);
         const effect = effectOf(inv.name);
 
         if (decision === 'deny') {

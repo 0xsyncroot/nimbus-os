@@ -39,6 +39,7 @@ export enum ErrorCode {
   // User (U*)
   U_BAD_COMMAND = 'U_BAD_COMMAND',
   U_MISSING_CONFIG = 'U_MISSING_CONFIG',
+  U_UI_BUSY = 'U_UI_BUSY',
 
   // System (Y*)
   Y_OOM = 'Y_OOM',

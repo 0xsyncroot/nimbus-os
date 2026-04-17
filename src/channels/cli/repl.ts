@@ -15,6 +15,7 @@ import type { TurnContext } from '../../core/turn.ts';
 import type { ToolInvocation as LoopToolInvocation } from '../../core/loop.ts';
 // eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): repl is the composition root; tool registry injected here until UIHost contract ships
 import { createDefaultRegistry, createLoopAdapter, type ToolRegistry } from '../../tools/index.ts';
+import { createCliUIHost } from './ui/cliHost.ts';
 import { createGate, compileRules, type Gate } from '../../permissions/index.ts';
 import { colors, prefixes } from './colors.ts';
 import { renderWelcome } from './welcome.ts';
@@ -280,6 +281,15 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   const isTTY = ttyInput.isTTY === true && typeof ttyInput.setRawMode === 'function' &&
     process.env['TERM'] !== 'dumb';
 
+  // SPEC-832: create CliUIHost at REPL startup.
+  const colorEnabled = process.env['NO_COLOR'] === undefined || process.env['NO_COLOR'] === '';
+  const cliUIHost = createCliUIHost({
+    stdin: ttyInput as NodeJS.ReadableStream & { setRawMode?: (raw: boolean) => unknown; isTTY?: boolean },
+    stdout: output as NodeJS.WriteStream,
+    isTTY,
+    colorEnabled,
+  });
+
   const ac = isTTY
     ? createAutocomplete({
         input: ttyInput,
@@ -311,7 +321,7 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
       continue;
     }
 
-    await runSingleTurn(state, trimmed, renderer, write, input, output, isTTY);
+    await runSingleTurn(state, trimmed, renderer, write, input, output, isTTY, cliUIHost);
   }
 
   if (isTTY) process.off('SIGWINCH', onSigwinch);
@@ -584,6 +594,7 @@ async function runSingleTurn(
   input: NodeJS.ReadableStream,
   output: NodeJS.WritableStream,
   isTTY: boolean,
+  host?: ReturnType<typeof createCliUIHost>,
 ): Promise<void> {
   const session = await getOrCreateSession(state.wsId);
   const abort = createTurnAbort();
@@ -626,6 +637,7 @@ async function runSingleTurn(
     model: state.model,
   };
   // SPEC-825: wire onAsk for interactive TTY (skipped in bypass mode — no prompts needed).
+  // SPEC-832: prefer host.ask() over legacy onAsk when CliUIHost is provided.
   const onAsk = state.mode !== 'bypass'
     ? makeOnAsk(input, output, isTTY)
     : undefined;
@@ -636,7 +648,10 @@ async function runSingleTurn(
     sessionId: session.id,
     cwd: process.cwd(),
     mode: state.mode,
+    // Legacy onAsk kept as fallback for one release (deprecated, SPEC-832).
     onAsk,
+    // SPEC-832: wire UIHost for multi-channel confirm routing.
+    host: host && state.mode !== 'bypass' ? host : undefined,
   });
   // SPEC-121: snapshot prior messages before the turn for rehydration
   const priorMessages = getCachedMessages(session.id);
