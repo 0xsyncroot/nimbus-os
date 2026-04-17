@@ -13,7 +13,7 @@ import { t } from '../../i18n/format.ts';
 const VAULT_KEY_FILENAME = '.vault-key';
 const CURRENT_VERSION = '0.3.21-alpha';
 
-interface CheckRow {
+export interface CheckRow {
   label: string;
   value: string;
   status: 'ok' | 'warn' | 'fail';
@@ -60,7 +60,12 @@ function printIssues(issues: CheckRow[]): void {
   }
 }
 
-export async function runDoctor(): Promise<number> {
+/**
+ * Pure logic: runs all health checks and returns results as CheckRow[].
+ * Does NOT write to stdout — see runDoctor() for the CLI stdout wrapper.
+ * DoctorModal uses this function directly (SPEC-847 T4 requirement).
+ */
+export async function runDoctorChecks(): Promise<CheckRow[]> {
   const rows: CheckRow[] = [];
 
   // Platform
@@ -128,6 +133,17 @@ export async function runDoctor(): Promise<number> {
       rows.push(row('.vault-key perm', 'absent', 'warn', 'No .vault-key file (file-fallback not yet used)'));
     }
   }
+
+  return rows;
+}
+
+/**
+ * CLI stdout-writing wrapper. Calls runDoctorChecks() for pure logic,
+ * then prints a formatted table + issue list to stdout.
+ * Returns exit code: 0 = all OK, 1 = issues found.
+ */
+export async function runDoctor(): Promise<number> {
+  const rows: CheckRow[] = await runDoctorChecks();
 
   printTable(rows);
 

@@ -1,7 +1,7 @@
 ---
 id: SPEC-847
 title: Modal panels with alt-screen takeover for 8 slash commands
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17

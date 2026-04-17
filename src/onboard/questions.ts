@@ -1,4 +1,6 @@
 // questions.ts — SPEC-901 T1: interactive question set with validators.
+// @deprecated Since SPEC-855 (v0.4): the Ink wizard (src/onboard/ink/) replaces this for
+// interactive `nimbus init`. Kept for `--no-prompt` scripted path and CI. Remove in v0.5.
 
 import { z } from 'zod';
 import { createInterface } from 'node:readline';

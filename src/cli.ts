@@ -143,8 +143,32 @@ async function main(): Promise<number> {
       printHelp();
       return 0;
     case 'init': {
-      const { runInit } = await import('./onboard/init.ts');
       const flags = parseFlags(args.slice(1));
+
+      // SPEC-855: Use Ink wizard unless legacy path is requested.
+      // Legacy path: --no-prompt (scripted/CI) OR --force OR piped stdin OR NIMBUS_UI=legacy.
+      const useLegacy =
+        flags.noPrompt ||
+        flags.force ||
+        !process.stdin.isTTY ||
+        process.env['NIMBUS_UI'] === 'legacy';
+
+      if (!useLegacy) {
+        // SPEC-855: Ink 7-step wizard
+        const { runInkInit } = await import('./onboard/ink/runInkInit.ts');
+        const prefill: Record<string, string | undefined> = {};
+        if (flags.provider !== undefined) prefill['provider'] = flags.provider;
+        if (flags.endpoint !== undefined) prefill['endpoint'] = flags.endpoint;
+        if (flags.baseUrl !== undefined) prefill['baseUrl'] = flags.baseUrl;
+        await runInkInit({ prefill: Object.keys(prefill).length > 0 ? prefill : undefined });
+        if (flags.noChat) return 0;
+        const { startRepl } = await import('./channels/cli/repl.ts');
+        await startRepl({ skipPermissions: flags.skipPermissions });
+        return 0;
+      }
+
+      // Legacy raw-readline path (--no-prompt / --force / piped stdin / NIMBUS_UI=legacy)
+      const { runInit } = await import('./onboard/init.ts');
       const opts: Parameters<typeof runInit>[0] = {
         force: flags.force,
         noPrompt: flags.noPrompt,

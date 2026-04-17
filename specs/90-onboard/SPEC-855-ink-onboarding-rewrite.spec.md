@@ -1,11 +1,12 @@
 ---
 id: SPEC-855
 title: ink-onboarding-rewrite — nimbus init wizard in Ink (7-step)
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
+implemented: 2026-04-17
 release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840, SPEC-841, SPEC-850]
