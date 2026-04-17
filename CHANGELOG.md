@@ -4,6 +4,31 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.3.20-alpha] — 2026-04-17 — SPEC-309 fix TelegramStatus from CLI channel (composition bug)
+
+User test on v0.3.19:
+```
+personal › tiếp tục thử
+  ⋯ using tool: TelegramStatus
+  Allow tool: TelegramStatus? — > Yes
+  ✓ done
+Kẹt rồi anh — TelegramStatus báo channel service not available in this context.
+```
+
+Picker works (v0.3.19 ghost-deny fix held). Tool SUCCEEDS the permission gate but returns a fallback string at execution → agent interprets as "I can't access Telegram".
+
+### Root cause
+
+Pure composition bug, NOT a design flaw. SPEC-833 correctly abstracted Telegram tools onto `core/channelPorts.ts`. `createRuntime()` in `src/channels/runtime.ts:354` is the singleton registrar. CLI REPL only called `getChannelRuntime()` at shutdown (`repl.ts:333`), never at startup → registry stayed `null` → `TelegramStatus.handler` saw `getChannelService() === null` and returned the `"channel service not available in this context"` fallback.
+
+### Fix (`v0.3.20`, SPEC-309)
+
+- `src/channels/cli/repl.ts` — one eager `getChannelRuntime()` call at REPL startup (next to `setTelegramRuntimeBridge(...)`). `createRuntime` is a pure factory (no network, no vault writes), so this is side-effect-free. Triggers `registerChannelService()` so tools find the live port.
+- `tests/tools/telegram.test.ts` — 2 regression tests: (a) post-init tool returns real vault-backed status, (b) pre-init tool returns the fallback (locked so a refactor can't silently regress).
+- New `specs/30-tools/SPEC-309-telegram-port-cli-wiring.spec.md`.
+
+Expected new output after fix: `Telegram: offline (no token stored)` or `Telegram: offline (token saved, adapter not started)` depending on vault state. NOT `channel service not available in this context`.
+
 ## [0.3.19-alpha] — 2026-04-17 — URGENT fix (Enter on "Yes" was silently rendered as "denied" for schema-less confirm tools)
 
 User repro on v0.3.18 binary:
