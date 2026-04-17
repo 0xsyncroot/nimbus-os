@@ -177,6 +177,74 @@ describe('SPEC-808 T3: Telegram tools', () => {
   });
 });
 
+// SPEC-309: regression — TelegramStatus from CLI composition root.
+// Bug (v0.3.19-alpha): REPL set the tool runtimeBridge but never called
+// getChannelRuntime(), so registerChannelService() never fired. Agent saw
+// "channel service not available in this context" when invoking TelegramStatus
+// from the CLI. Fix = eager `getChannelRuntime()` at REPL startup.
+describe('SPEC-309: TelegramStatus after getChannelRuntime bootstrap', () => {
+  let workDir: string;
+  let wsId: string;
+
+  beforeEach(async () => {
+    workDir = await mkdtemp(join(tmpdir(), 'nimbus-tg-boot-'));
+    process.env['NIMBUS_HOME'] = workDir;
+    process.env['NIMBUS_VAULT_PASSPHRASE'] = 'test-pass';
+    process.env['NIMBUS_SECRETS_BACKEND'] = 'file';
+    __resetSecretStoreCache();
+    __resetFileFallbackKey();
+    __resetChannelRuntime();
+    __resetChannelService();
+
+    const { meta } = await createWorkspaceDir({ name: 'tg-boot' });
+    wsId = meta.id;
+    await switchWorkspace(wsId);
+    setTelegramRuntimeBridge(null);
+    // Deliberately DO NOT call registerChannelService() here — we want to
+    // prove that getChannelRuntime() does it on our behalf.
+  });
+
+  afterEach(async () => {
+    delete process.env['NIMBUS_HOME'];
+    delete process.env['NIMBUS_VAULT_PASSPHRASE'];
+    delete process.env['NIMBUS_SECRETS_BACKEND'];
+    __resetSecretStoreCache();
+    __resetFileFallbackKey();
+    __resetChannelRuntime();
+    __resetChannelService();
+    setTelegramRuntimeBridge(null);
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  test('TelegramStatus returns real status (not fallback stub) after getChannelRuntime()', async () => {
+    // Simulate what repl.ts now does at startup (SPEC-309).
+    const { getChannelRuntime } = await import('../../src/channels/runtime.ts');
+    getChannelRuntime();
+
+    const tool = createTelegramStatusTool();
+    const res = await tool.handler({}, makeCtx(wsId));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Real path: channel service is registered → reports vault-backed truth.
+    expect(res.output.connected).toBe(false);
+    expect(res.output.tokenPresent).toBe(false);
+    expect(res.output.allowedUserIds).toEqual([]);
+    // The fallback branch would have produced this display string; ensure
+    // we are NOT taking that branch anymore.
+    expect(res.display).not.toContain('channel service not available');
+    expect(res.display).toContain('Telegram:');
+  });
+
+  test('Without getChannelRuntime() the fallback branch still fires (pre-fix shape)', async () => {
+    // No bootstrap call → port is null → tool returns the friendly stub.
+    const tool = createTelegramStatusTool();
+    const res = await tool.handler({}, makeCtx(wsId));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.display).toContain('channel service not available');
+  });
+});
+
 // Sanity: registry shape check — ensures tool names don't collide with builtins.
 describe('SPEC-808: tool name hygiene', () => {
   test('telegram tools register without collision', () => {

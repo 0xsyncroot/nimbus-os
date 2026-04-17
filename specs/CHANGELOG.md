@@ -2,6 +2,32 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-17 — v0.3.20-alpha SPEC-309: eager ChannelRuntime wiring (fix TelegramStatus "channel service not available")
+
+- @hiepht: **Symptom** — user on v0.3.19-alpha confirmed tool `TelegramStatus`
+  through the picker; tool ran but returned `"Telegram: channel service
+  not available in this context"`. Agent interpreted as "I can't access
+  Telegram" and gave up.
+- @hiepht: **Root cause** — SPEC-833 introduced the `ChannelService` port
+  in `src/core/channelPorts.ts`. `registerChannelService()` is called
+  inside `createRuntime()` in `src/channels/runtime.ts`. The CLI REPL
+  (`src/channels/cli/repl.ts`) only called `getChannelRuntime()` at
+  shutdown (line 333), never at startup — so the runtime singleton was
+  null and the port was never registered. `TelegramStatus.handler`
+  (`src/tools/builtin/Telegram.ts:201`) saw `getChannelService() === null`
+  and took the friendly-fallback branch that emitted the stub string.
+- @hiepht: **Fix** — single eager `getChannelRuntime()` call at REPL
+  boot, right before `setTelegramRuntimeBridge(...)`. `createRuntime()`
+  is a pure factory (no adapter start, no network), so this is free.
+  Regression test `tests/tools/telegram.test.ts` proves fresh-runtime
+  path returns real status, and documents the pre-fix fallback shape so
+  a future refactor cannot silently reintroduce the gap.
+- @hiepht: **Why not Option C (vault-direct read in tool)** — would have
+  re-introduced a `tools → channels/vault` edge that SPEC-833 just
+  removed; and the runtime's `getTelegramStatus` already reads
+  `readSummary()` from the vault while adapter is stopped, so the port
+  already covers both cases. The bug was purely composition, not design.
+
 ## 2026-04-17 — v0.3.16-alpha URGENT: orphan tool_use sanitizer (fix P_INVALID_REQUEST 400 on replay)
 
 - @hiepht: **Symptom** — user on v0.3.15 reported every REPL turn failing

@@ -224,6 +224,14 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
 
   const unwireBus = wireBusSubscribers({ workspaceId: state.wsId, channel: 'cli' });
 
+  // SPEC-309: eagerly materialise the ChannelRuntime so that
+  // `registerChannelService()` fires and the ChannelService port is available
+  // to tools (TelegramStatus etc.) on first invocation. Without this call the
+  // runtime singleton stays null until REPL shutdown and tools see the
+  // fallback "channel service not available in this context" message.
+  // `createChannelManager()` is a pure factory; no adapters start here.
+  getChannelRuntime();
+
   // SPEC-808: bind the Telegram tool bridge so ConnectTelegram can start the
   // adapter with the same provider/model/registry/gate the REPL uses. The
   // bridge captures a closure over `state`; a tool invocation happens during

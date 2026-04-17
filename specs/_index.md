@@ -14,12 +14,13 @@
 | META-009 | Threat model — attack vectors + mitigations | approved | 2026-04-15 |
 | META-010 | Naming conventions — files, identifiers, specs, commits | approved | 2026-04-15 |
 
-## v0.1 Feature Specs (32 total)
+## v0.1 Feature Specs (33 total)
 
 ### channels
 
 | ID | Title | Status | Deps | Est LoC |
 |----|-------|--------|------|---------|
+| SPEC-309 | Telegram ChannelService port — eager CLI wiring | approved | SPEC-808, SPEC-833 | 20 |
 | SPEC-801 | CLI REPL + confirm prompt | implemented | SPEC-103, SPEC-401, SPEC-501, SPEC-601 | 400 |
 
 ### core
