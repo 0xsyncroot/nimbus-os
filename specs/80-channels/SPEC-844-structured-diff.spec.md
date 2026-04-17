@@ -1,7 +1,7 @@
 ---
 id: SPEC-844
 title: StructuredDiff colored unified diff for Write and Edit tools
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
