@@ -555,78 +555,22 @@ export function makeOnAsk(
   isTTY: boolean,
 ): ((inv: LoopToolInvocation) => Promise<'allow' | 'deny' | 'always'>) | undefined {
   if (!isTTY) return undefined;
-  const rawInput = input as NodeJS.ReadableStream & {
-    setRawMode?: (b: boolean) => unknown;
-    setEncoding?: (enc: BufferEncoding) => unknown;
-    isTTY?: boolean;
-  };
   return async (inv: LoopToolInvocation): Promise<'allow' | 'deny' | 'always'> => {
     const humanAction = humanizeToolInvocation(inv);
-    const question = `${colors.warn(prefixes.ask)} Cho em ${humanAction}? [Y/n/always/never] `;
-    output.write(question);
-    return new Promise<'allow' | 'deny' | 'always'>((resolve) => {
-      let settled = false;
-      let buffer = '';
-      const prevRaw = rawInput.isTTY === true;
-
-      const cleanup = (): void => {
-        rawInput.removeListener('data', onData);
-        if (typeof rawInput.setRawMode === 'function' && prevRaw) {
-          try { rawInput.setRawMode(false); } catch { /* ignore */ }
-        }
-      };
-
-      const finish = (dec: 'allow' | 'deny' | 'always'): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        cleanup();
-        resolve(dec);
-      };
-
-      const onData = (chunk: Buffer | string): void => {
-        if (settled) return;
-        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-        if (text.includes('\x03')) {
-          output.write('\n');
-          finish('deny');
-          return;
-        }
-        for (const ch of text) {
-          if (ch === '\r' || ch === '\n') {
-            output.write('\n');
-            const answer = parseConfirmAnswer(buffer);
-            finish(answer === 'always' ? 'always' : answer === 'allow' ? 'allow' : 'deny');
-            return;
-          }
-          if (ch === '\x7f' || ch === '\b') {
-            if (buffer.length > 0) {
-              buffer = buffer.slice(0, -1);
-              output.write('\b \b');
-            }
-            continue;
-          }
-          buffer += ch;
-          output.write(ch);
-        }
-      };
-
-      const timer = setTimeout(() => {
-        if (settled) return;
-        output.write(`\n${colors.dim('(timeout — default: No)')}\n`);
-        finish('deny');
-      }, 10_000);
-
-      // BUG B FIX: setRawMode(true) and resume() BEFORE attaching the data
-      // listener so no keystroke can arrive in cooked mode (double-echo).
-      if (typeof rawInput.setEncoding === 'function') rawInput.setEncoding('utf8');
-      if (typeof rawInput.setRawMode === 'function') {
-        try { rawInput.setRawMode(true); } catch { /* ignore */ }
-      }
-      // Defense: ensure stream is flowing even if a prior close() paused it.
-      (rawInput as { resume?: () => void }).resume?.();
-      rawInput.on('data', onData);
+    const question = `${colors.warn(prefixes.ask)} Cho em ${humanAction}?`;
+    // v0.3.11 fix: delegate to confirmPick() arrow-key widget (single source
+    // of truth). Previous manual raw-mode handler was still hitting the
+    // double-echo bug ("yy" from one "y" keystroke) because stdin's kernel
+    // buffer could retain a cooked-mode echoed char when raw mode was
+    // toggled mid-turn. confirmPick owns rawMode acquisition + buffer drain
+    // the same way pickOne does for slash commands.
+    const { confirmPick } = await import('../../onboard/picker.ts');
+    const decision = await confirmPick(question, {
+      input: input as NodeJS.ReadableStream & { setRawMode?: (b: boolean) => unknown; isTTY?: boolean },
+      output,
     });
+    if (decision === 'never') return 'deny'; // 'never' semantics not yet wired; treat as deny for v0.3.11
+    return decision;
   };
 }
 

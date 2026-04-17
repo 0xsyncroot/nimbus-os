@@ -10,7 +10,7 @@ import { diagnoseVault } from '../../platform/secrets/diagnose.ts';
 import { getActiveWorkspace } from '../../core/workspace.ts';
 
 const VAULT_KEY_FILENAME = '.vault-key';
-const CURRENT_VERSION = '0.3.10-alpha';
+const CURRENT_VERSION = '0.3.11-alpha';
 
 interface CheckRow {
   label: string;

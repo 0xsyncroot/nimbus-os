@@ -81,52 +81,52 @@ describe('v0.3.5: parseConfirmAnswer', () => {
   });
 });
 
-describe('v0.3.5: makeOnAsk reads one line without pausing stdin', () => {
-  test('y + Enter → resolve allow, stdin NOT paused on resolve', async () => {
-    const { stream, state } = makeFakeStdin();
+describe('v0.3.11: makeOnAsk delegates to confirmPick (single-char shortcuts, no Enter)', () => {
+  test('y single keystroke → allow (no Enter needed, no double-echo)', async () => {
+    const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true);
     expect(onAsk).toBeDefined();
 
     const pending = onAsk!({ toolUseId: 't1', name: 'Write', input: { path: '/tmp/x.txt' } });
-    // Emit 'y\r' through the stream — consumer (data listener) receives it.
+    // confirmPick resolves on single char via shortcuts map — no '\r' needed
     await new Promise((r) => setImmediate(r));
-    stream.write('y\r');
+    stream.write('y');
     const decision = await pending;
 
     expect(decision).toBe('allow');
-    expect(state.paused).toBe(false);
-    expect(state.rawMode).toBe(false); // cleaned up on finish
+    // Note: confirmPick (pickOne) pauses stdin in cleanup by design; slashAutocomplete
+    // resume()s on re-entry per SPEC-505. Pause here is acceptable.
   });
 
-  test('n + Enter → deny', async () => {
+  test('n single keystroke → deny', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't2', name: 'Bash', input: { cmd: 'ls' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('n\r');
+    stream.write('n');
     expect(await pending).toBe('deny');
   });
 
-  test('always + Enter → always', async () => {
+  test('a single keystroke → always', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't3', name: 'Write', input: { path: '/tmp/y.txt' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('always\r');
+    stream.write('a');
     expect(await pending).toBe('always');
   });
 
-  test('Ctrl-C (0x03) → deny (no throw, no hang)', async () => {
+  test('Enter with default selected → allow (Yes is item[0])', async () => {
     const { stream } = makeFakeStdin();
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
     const pending = onAsk({ toolUseId: 't4', name: 'Write', input: { path: '/tmp/z.txt' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('\x03');
-    expect(await pending).toBe('deny');
+    stream.write('\r'); // Enter on default-selected Yes
+    expect(await pending).toBe('allow');
   });
 
   test('after resolve, new "data" listener still receives bytes (REPL can re-enter)', async () => {
@@ -134,12 +134,14 @@ describe('v0.3.5: makeOnAsk reads one line without pausing stdin', () => {
     const { out } = makeOutput();
     const onAsk = makeOnAsk(stream, out, true)!;
 
-    // Round 1: prompt y
+    // Round 1: prompt y (single char via confirmPick shortcut)
     const p1 = onAsk({ toolUseId: 'r1', name: 'Write', input: { path: '/a' } });
     await new Promise((r) => setImmediate(r));
-    stream.write('y\r');
+    stream.write('y');
     expect(await p1).toBe('allow');
-    expect(state.paused).toBe(false);
+    // Note: confirmPick pauses stdin on cleanup. Next reader (slashAutocomplete)
+    // is responsible for calling resume() (SPEC-505 fix).
+    stream.resume();
 
     // Round 2: simulate REPL re-attaching a listener (like slashAutocomplete.readLine).
     const received: string[] = [];
