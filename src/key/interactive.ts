@@ -11,6 +11,7 @@ import { autoProvisionPassphrase } from '../platform/secrets/fileFallback.ts';
 import { createKeyManager, maskKey, type KeyListEntry } from './manager.ts';
 import { promptApiKey } from '../onboard/keyPrompt.ts';
 import { detectProviderFromKey } from '../onboard/keyValidators.ts';
+import { pickOne, type PickerItem } from '../onboard/picker.ts';
 import { logger } from '../observability/logger.ts';
 
 const KNOWN_PROVIDERS = ['openai', 'anthropic', 'groq', 'gemini', 'deepseek', 'ollama'] as const;
@@ -58,34 +59,34 @@ export async function runInteractiveKeyManager(ctx: KeyManagerContext): Promise<
 
   const manager = createKeyManager();
 
-  for (;;) {
-    // Refresh list each loop iteration (reflects changes from this session).
-    const entries = await manager.list(ctx.workspaceId || undefined);
-    const choice = await renderMenu(ctx, entries);
+  // Refresh list once; we do NOT loop back after a successful action (Bug C fix).
+  const entries = await manager.list(ctx.workspaceId || undefined);
+  const choice = await renderMenu(ctx, entries);
 
-    if (choice === 'cancel') return 0;
+  if (choice === 'cancel') return 0;
 
-    if (choice === 'add') {
-      await addKeyFlow(ctx, manager);
-      continue;
-    }
-
-    // Existing provider action.
-    const { provider, entry } = choice;
-    const action = entry
-      ? await renderSubMenu(ctx, provider)
-      : 'replace'; // empty slot → go straight to paste
-
-    if (action === 'cancel') continue;
-
-    if (action === 'replace') {
-      await changeKeyFlow(ctx, provider, manager);
-    } else if (action === 'test') {
-      await testFlow(ctx, provider, manager);
-    } else if (action === 'remove') {
-      await removeFlow(ctx, provider, manager);
-    }
+  if (choice === 'add') {
+    await addKeyFlow(ctx, manager);
+    return 0;
   }
+
+  // Existing provider action.
+  const { provider, entry } = choice;
+  const action = entry
+    ? await renderSubMenu(ctx, provider)
+    : 'replace'; // empty slot → go straight to paste
+
+  if (action === 'cancel') return 0;
+
+  if (action === 'replace') {
+    await changeKeyFlow(ctx, provider, manager);
+  } else if (action === 'test') {
+    await testFlow(ctx, provider, manager);
+  } else if (action === 'remove') {
+    await removeFlow(ctx, provider, manager);
+  }
+
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,53 +99,53 @@ type MenuChoice =
   | { provider: string; entry: KeyListEntry | undefined };
 
 async function renderMenu(ctx: KeyManagerContext, entries: KeyListEntry[]): Promise<MenuChoice> {
-  ctx.output.write('\nAPI keys\n────────\n');
-
   const slots = KNOWN_PROVIDERS.map((p): { provider: string; entry: KeyListEntry | undefined } => ({
     provider: p,
     entry: entries.find((e) => e.provider === p),
   }));
 
-  slots.forEach((slot, i) => {
-    if (slot.entry) {
-      const ago = formatAge(slot.entry.createdAt);
-      ctx.output.write(`  [${i + 1}] ${slot.provider.padEnd(12)} ${slot.entry.masked.padEnd(14)} ${ago}\n`);
-    } else {
-      ctx.output.write(`  [${i + 1}] ${slot.provider.padEnd(12)} (not set)\n`);
-    }
-  });
-  ctx.output.write(`  [0] cancel\n\n`);
+  type MenuValue = 'cancel' | 'add' | { provider: string; entry: KeyListEntry | undefined };
 
-  const raw = await promptLine(ctx, '  Choose [0-6 or provider name]: ');
-  const trimmed = raw.trim().toLowerCase();
+  const items: PickerItem<MenuValue>[] = [
+    ...slots.map((slot): PickerItem<MenuValue> => {
+      const hint = slot.entry
+        ? `${slot.entry.masked.padEnd(14)} ${formatAge(slot.entry.createdAt)}`
+        : '(not set)';
+      return { value: slot, label: slot.provider.padEnd(12), hint };
+    }),
+    { value: 'add' as MenuValue, label: 'Add new key…' },
+    { value: 'cancel' as MenuValue, label: 'Cancel' },
+  ];
 
-  if (trimmed === '0' || trimmed === 'cancel' || trimmed === 'q') return 'cancel';
-  if (trimmed === 'add') return 'add';
+  // Default cursor on first empty slot (or Cancel if all set).
+  const firstEmpty = slots.findIndex((s) => !s.entry);
+  const defaultIdx = firstEmpty >= 0 ? firstEmpty : items.length - 1;
 
-  // Digit selection.
-  const digit = parseInt(trimmed, 10);
-  if (Number.isFinite(digit) && digit >= 1 && digit <= slots.length) {
-    return slots[digit - 1]!;
-  }
+  const io = { input: ctx.input, output: ctx.output };
+  const picked = await pickOne<MenuValue>('API keys', items, { default: defaultIdx }, io);
 
-  // Provider name selection.
-  const byName = slots.find((s) => s.provider === trimmed);
-  if (byName) return byName;
-
-  ctx.output.write(`  Unknown choice: "${raw.trim()}"\n`);
-  return renderMenu(ctx, entries); // retry
+  if (picked === 'skip' || typeof picked === 'object' && 'custom' in picked) return 'cancel';
+  return picked as MenuChoice;
 }
 
 type SubAction = 'replace' | 'test' | 'remove' | 'cancel';
 
 async function renderSubMenu(ctx: KeyManagerContext, provider: string): Promise<SubAction> {
-  ctx.output.write(`\n  ${provider}: [R]eplace  [T]est  [D]elete  [C]ancel\n`);
-  const raw = await promptLine(ctx, '  Action: ');
-  const ch = raw.trim().toLowerCase();
-  if (ch === 'r' || ch === 'replace') return 'replace';
-  if (ch === 't' || ch === 'test') return 'test';
-  if (ch === 'd' || ch === 'delete' || ch === 'remove') return 'remove';
-  return 'cancel';
+  const items: PickerItem<SubAction>[] = [
+    { value: 'replace', label: 'Replace key', hint: 'paste a new key' },
+    { value: 'test',    label: 'Test key',    hint: 'verify it works' },
+    { value: 'remove',  label: 'Delete key',  hint: 'removes from vault' },
+    { value: 'cancel',  label: 'Cancel' },
+  ];
+  const io = { input: ctx.input, output: ctx.output };
+  const picked = await pickOne<SubAction>(
+    `${provider}: what to do?`,
+    items,
+    { default: 0, shortcuts: { r: 0, t: 1, d: 2, c: 3 } },
+    io,
+  );
+  if (picked === 'skip' || typeof picked === 'object') return 'cancel';
+  return picked as SubAction;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +166,7 @@ export async function changeKeyFlow(
     prompt: `  ${provider} API key (masked): `,
     input,
     output: ctx.output,
+    clearOnExit: true,
   });
 
   // Live-test before writing — catches typos / revoked keys.
@@ -212,6 +214,7 @@ export async function addKeyFlow(
     prompt: '  API key (masked): ',
     input,
     output: ctx.output,
+    clearOnExit: true,
   });
 
   const detected = detectProviderFromKey(key);

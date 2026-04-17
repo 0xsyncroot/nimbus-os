@@ -13,6 +13,8 @@ export interface KeyPromptOptions {
   input?: NodeJS.ReadStream;
   output?: NodeJS.WritableStream;
   prompt?: string;
+  /** If true, erases the masked-input line on exit so `*` stars don't linger. */
+  clearOnExit?: boolean;
 }
 
 const DEFAULT_MASK = '*';
@@ -43,6 +45,10 @@ export async function promptApiKey(opts: KeyPromptOptions): Promise<string> {
       input.removeListener('data', onData);
       input.pause();
       input.setRawMode(wasRaw);
+      if (opts.clearOnExit) {
+        // Erase the masked line so `*` stars don't leave a visible overlap.
+        output.write('\r\x1b[2K');
+      }
       output.write('\n');
     };
 

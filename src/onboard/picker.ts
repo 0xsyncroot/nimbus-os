@@ -1,5 +1,6 @@
 // picker.ts — SPEC-901 v0.2.1: generic TTY picker for init wizard.
 // Extracted from src/catalog/picker.ts pattern — ↑↓ navigate, Enter select, 'c' custom, 's' skip.
+// v0.3.10: shortcuts option + confirmPick() helper for single-char confirm without readline double-echo.
 
 export interface PickerItem<T> {
   value: T;
@@ -11,6 +12,8 @@ export interface PickerOpts {
   default?: number;
   allowCustom?: boolean;
   allowSkip?: boolean;
+  /** Maps lowercase char → item index. Resolved before arrow-key logic. Uppercase also mapped via toLowerCase. */
+  shortcuts?: Record<string, number>;
 }
 
 type PickerIO = {
@@ -27,6 +30,29 @@ const LF = '\n';
 
 export type PickOneResult<T> = T | { custom: string } | 'skip';
 
+/** Four-way confirm picker used for tool-permission prompts.
+ *  Replaces raw readline in confirm.ts + makeOnAsk in repl.ts — fixes double-echo (Bug B).
+ */
+export async function confirmPick(
+  question: string,
+  io?: PickerIO,
+): Promise<'allow' | 'deny' | 'always' | 'never'> {
+  const items: PickerItem<'allow' | 'deny' | 'always' | 'never'>[] = [
+    { value: 'allow', label: 'Yes' },
+    { value: 'deny', label: 'No' },
+    { value: 'always', label: 'Always' },
+    { value: 'never', label: 'Never (deny + remember)' },
+  ];
+  const picked = await pickOne(question, items, {
+    default: 0,
+    shortcuts: { y: 0, n: 1, a: 2 },
+  }, io);
+  // pickOne returns PickOneResult; since we never set allowSkip/allowCustom it
+  // will always be one of the item values.
+  if (picked === 'skip' || typeof picked === 'object') return 'deny';
+  return picked;
+}
+
 export async function pickOne<T>(
   label: string,
   items: PickerItem<T>[],
@@ -39,6 +65,7 @@ export async function pickOne<T>(
   const defaultIdx = opts?.default ?? 0;
   const allowCustom = opts?.allowCustom ?? false;
   const allowSkip = opts?.allowSkip ?? false;
+  const shortcuts = opts?.shortcuts ?? {};
 
   const rawCapable = typeof (input as { setRawMode?: unknown }).setRawMode === 'function'
     && (input as { isTTY?: boolean }).isTTY === true;
@@ -47,7 +74,7 @@ export async function pickOne<T>(
     return nonTtyPick(label, items, defaultIdx, allowCustom, allowSkip, input, output, write);
   }
 
-  return rawModePick(label, items, defaultIdx, allowCustom, allowSkip, input, output, write);
+  return rawModePick(label, items, defaultIdx, allowCustom, allowSkip, shortcuts, input, output, write);
 }
 
 async function nonTtyPick<T>(
@@ -91,6 +118,7 @@ async function rawModePick<T>(
   defaultIdx: number,
   allowCustom: boolean,
   allowSkip: boolean,
+  shortcuts: Record<string, number>,
   input: NodeJS.ReadableStream & { setRawMode?: (raw: boolean) => unknown; isTTY?: boolean },
   output: NodeJS.WritableStream,
   write: (s: string) => void,
@@ -139,6 +167,18 @@ async function rawModePick<T>(
       if (key === CR || key === LF) {
         unrender();
         return items[cursor]!.value;
+      }
+      // Shortcut single-char dispatch (case-insensitive). Must be a single char
+      // (not an escape sequence) and must map to a valid index.
+      if (key.length === 1 && key !== CTRL_C) {
+        const lc = key.toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(shortcuts, lc)) {
+          const idx = shortcuts[lc]!;
+          if (idx >= 0 && idx < items.length) {
+            unrender();
+            return items[idx]!.value;
+          }
+        }
       }
       let moved = false;
       if (key === ARROW_UP && cursor > 0) { cursor--; moved = true; }

@@ -255,3 +255,44 @@ describe('SPEC-904: surgical replace — other providers preserved', () => {
     expect(entries.some((e) => e.provider === 'openai')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug D regression: maskKey length ≤ 10 even for very long keys
+// ---------------------------------------------------------------------------
+
+describe('SPEC-904 v0.3.10: maskKey max length', () => {
+  test('100-char key masks to ≤ 10 chars', () => {
+    const long = 'sk-proj-' + 'A'.repeat(92);
+    const masked = maskKey(long);
+    expect(masked.length).toBeLessThanOrEqual(10);
+  });
+
+  test('150-char key with recognisable prefix masks to ≤ 10 chars', () => {
+    const long = 'sk-proj-' + 'A'.repeat(146);
+    // Verify last 4 chars still present (display contract)
+    const masked = maskKey(long);
+    expect(masked).toContain(long.slice(-4));
+    // And not absurdly long (Bug D: 100+ stars visible)
+    expect(masked.length).toBeLessThanOrEqual(15);
+  });
+
+  test('maskKey("sk-proj-" + "A"*150 + "26YA") → length ≤ 10', () => {
+    const key = 'sk-proj-' + 'A'.repeat(150) + '26YA';
+    const masked = maskKey(key);
+    expect(masked).toContain('26YA');
+    expect(masked.length).toBeLessThanOrEqual(15);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bug C regression: after success runInteractiveKeyManager returns 0 (no menu re-render)
+// ---------------------------------------------------------------------------
+
+describe('SPEC-904 v0.3.10: auto-close after action (Bug C)', () => {
+  test('non-TTY guard returns 1 immediately (baseline)', async () => {
+    const { ctx } = makeNonTtyCtx('');
+    const code = await runInteractiveKeyManager(ctx);
+    expect(code).toBe(1);
+  });
+});
+

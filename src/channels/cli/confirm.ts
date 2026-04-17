@@ -1,6 +1,8 @@
 // confirm.ts — SPEC-801 T2: y/n prompt with default-N + 30s timeout.
+// v0.3.10: rewritten to use confirmPick() from picker.ts — eliminates readline
+// double-echo (Bug B) and unifies UX with arrow-key picker pattern.
 
-import { createInterface } from 'node:readline';
+import { confirmPick } from '../../onboard/picker.ts';
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
 import { colors, prefixes } from './colors.ts';
 
@@ -34,13 +36,33 @@ function strictAnswer(raw: string, defaultNo: boolean): boolean {
 }
 
 export async function confirm(question: string, opts: ConfirmOptions = {}): Promise<boolean> {
-  const defaultNo = opts.defaultNo ?? true;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
 
+  const rawInput = input as NodeJS.ReadableStream & {
+    setRawMode?: (b: boolean) => unknown;
+    isTTY?: boolean;
+  };
+
+  // Raw-mode TTY path: use arrow-key picker (fixes double-echo).
+  if (typeof rawInput.setRawMode === 'function' && rawInput.isTTY) {
+    const result = await Promise.race([
+      confirmPick(renderPrompt(question, opts.defaultNo ?? true), { input, output }),
+      new Promise<'deny'>((resolve) => {
+        setTimeout(() => {
+          output.write(`\n${colors.dim('(timeout — default: No)')}\n`);
+          resolve('deny');
+        }, timeoutMs);
+      }),
+    ]);
+    return result === 'allow' || result === 'always';
+  }
+
+  // Non-TTY fallback: readline (original path, no double-echo in cooked mode).
+  const { createInterface } = await import('node:readline');
   const rl = createInterface({ input, output, terminal: false });
-  const promptText = renderPrompt(question, defaultNo);
+  const promptText = renderPrompt(question, opts.defaultNo ?? true);
 
   return new Promise<boolean>((resolve, reject) => {
     let settled = false;
@@ -66,7 +88,7 @@ export async function confirm(question: string, opts: ConfirmOptions = {}): Prom
       settled = true;
       clearTimeout(timer);
       rl.close();
-      resolve(strictAnswer(answer, defaultNo));
+      resolve(strictAnswer(answer, opts.defaultNo ?? true));
     });
   });
 }

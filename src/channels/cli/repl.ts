@@ -543,17 +543,12 @@ export function parseConfirmAnswer(raw: string): 'allow' | 'deny' | 'always' | n
  *  Falls back to 'deny' on timeout (10s) or non-interactive TTY.
  *
  *  v0.3.5 URGENT FIX: prior impl used node:readline createInterface to read
- *  the y/n answer. On rl.close() Node/Bun explicitly PAUSES stdin (see
- *  lib/internal/readline/interface.js — close() emits 'pause'). When control
- *  returned to the outer slashAutocomplete readLine() which calls
- *  setRawMode(true) + on('data', ...), stdin stays paused (attaching a data
- *  listener does not auto-resume an explicitly paused stream in Bun 1.3). With
- *  no pending I/O keeping the loop alive, Bun exits with code 0 mid-REPL —
- *  user sees the shell prompt return.
+ *  the y/n answer. On rl.close() Node/Bun explicitly PAUSES stdin.
  *
- *  Fix: read the single y/n/always/never token directly via raw-mode 'data'
- *  event — identical mechanism to slashAutocomplete. No createInterface, no
- *  pause on stdin, REPL stays alive on the next readLine() cycle. */
+ *  v0.3.10 FIX (Bug B — double-echo): prior impl attached on('data', onData)
+ *  BEFORE setRawMode(true). A keystroke arriving while still in cooked mode got
+ *  kernel-echoed PLUS onData output.write(ch) → double char → "yy" for one "y".
+ *  Fix: call setRawMode(true) and resume() BEFORE attaching the data listener. */
 export function makeOnAsk(
   input: NodeJS.ReadableStream,
   output: NodeJS.WritableStream,
@@ -576,9 +571,6 @@ export function makeOnAsk(
 
       const cleanup = (): void => {
         rawInput.removeListener('data', onData);
-        // Restore line-mode so subsequent listeners (autocomplete) see the
-        // stream in a known baseline. setRawMode(false) is safe even if we
-        // never turned it on.
         if (typeof rawInput.setRawMode === 'function' && prevRaw) {
           try { rawInput.setRawMode(false); } catch { /* ignore */ }
         }
@@ -595,16 +587,11 @@ export function makeOnAsk(
       const onData = (chunk: Buffer | string): void => {
         if (settled) return;
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-        // Ctrl-C (0x03) during confirm → deny (same as outer REPL treats it).
         if (text.includes('\x03')) {
           output.write('\n');
           finish('deny');
           return;
         }
-        // Echo printable chars so user sees what they typed (raw mode disables
-        // terminal echo). Skip backspace handling — a single-token confirm is
-        // simple enough that typos just collect until Enter; `parseConfirmAnswer`
-        // lowercases + trims anyway.
         for (const ch of text) {
           if (ch === '\r' || ch === '\n') {
             output.write('\n');
@@ -612,7 +599,6 @@ export function makeOnAsk(
             finish(answer === 'always' ? 'always' : answer === 'allow' ? 'allow' : 'deny');
             return;
           }
-          // Backspace / DEL
           if (ch === '\x7f' || ch === '\b') {
             if (buffer.length > 0) {
               buffer = buffer.slice(0, -1);
@@ -631,13 +617,15 @@ export function makeOnAsk(
         finish('deny');
       }, 10_000);
 
+      // BUG B FIX: setRawMode(true) and resume() BEFORE attaching the data
+      // listener so no keystroke can arrive in cooked mode (double-echo).
       if (typeof rawInput.setEncoding === 'function') rawInput.setEncoding('utf8');
       if (typeof rawInput.setRawMode === 'function') {
         try { rawInput.setRawMode(true); } catch { /* ignore */ }
       }
-      rawInput.on('data', onData);
       // Defense: ensure stream is flowing even if a prior close() paused it.
       (rawInput as { resume?: () => void }).resume?.();
+      rawInput.on('data', onData);
     });
   };
 }
