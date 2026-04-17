@@ -44,6 +44,8 @@ export interface WelcomeProps {
   workspace?: string;
   /** Active model identifier */
   model?: string;
+  /** Pre-flight hint: shown when defaultProvider has no resolvable key */
+  keyHint?: string;
 }
 
 // ── Variant selector ───────────────────────────────────────────────────────────
@@ -119,7 +121,21 @@ function PlainWelcome({ version, workspace, model }: WelcomeProps): React.ReactE
 
 export function Welcome(props: WelcomeProps): React.ReactElement {
   const variant = pickVariant(props);
-  if (variant === 'wide') return <WideWelcome {...props} />;
-  if (variant === 'compact') return <CompactWelcome {...props} />;
-  return <PlainWelcome {...props} />;
+  const banner = variant === 'wide'
+    ? <WideWelcome {...props} />
+    : variant === 'compact'
+      ? <CompactWelcome {...props} />
+      : <PlainWelcome {...props} />;
+
+  if (!props.keyHint) return banner;
+
+  return (
+    <Box flexDirection="column">
+      {banner}
+      <Box>
+        <Text dimColor>{'⚠ '}</Text>
+        <Text color="yellow">{props.keyHint}</Text>
+      </Box>
+    </Box>
+  );
 }

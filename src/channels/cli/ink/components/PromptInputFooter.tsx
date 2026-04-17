@@ -76,6 +76,9 @@ export function PromptInputFooter({
 
   return (
     <Box flexDirection="row" gap={1}>
+      {/* Connector glyph — visually ties this row to the PromptInput box above */}
+      <Text color={subtleColorProp}>{'╰'}</Text>
+
       {/* Mode badge */}
       <Text color={modeColorProp} bold>
         {mode}

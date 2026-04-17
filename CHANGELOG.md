@@ -4,6 +4,27 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.4.0.1-alpha] — 2026-04-17 — HOTFIX (P0 vault clobber + UI layout)
+
+### Fixed — P0 vault clobber (HARD RULE §10 violation)
+
+Every bare `nimbus` boot ran `diagnoseVault → runRecoveryPrompt → backupCorruptVault` UNCONDITIONALLY, writing `secrets.enc.bak-*-corrupt` files whether the vault was actually corrupt or not. Pre-existing bug since v0.3.7 that v0.4 upgrade path surfaced by cold-booting more frequently.
+
+- **Forensic**: all "-corrupt" labeled backups decrypt cleanly with existing `.vault-key`. The suffix was misleading — files were byte-valid. User keys are recoverable.
+- **Root cause**: `src/cli.ts` lines 272–285 fired diagnose+recovery on NON-user-initiated path.
+- **Fix A**: removed the boot-time diagnose block. Diagnose now only via user-initiated `nimbus debug vault status`.
+- **Fix B**: `backupCorruptVault` probes `canDecryptVault` before writing any backup. Probe pattern from v0.3.7 autoProvisionPassphrase.
+- **Regression test**: new `tests/e2e/vault-readonly-smoke.test.ts` — spawns compiled binary, snapshots sha256 of `$NIMBUS_HOME`, runs `--version/--help/bare`, asserts zero file changes. Canary for any future §10 violation.
+
+### Fixed — Ink REPL layout bugs
+
+- Duplicate StatusLine caused by stderr write scrolling Ink frame anchor (`repl.ts:197`).
+- ErrorDialog too visually aggressive for recoverable `U_MISSING_CONFIG` — demoted to inline toast.
+- PromptInput had no border/chrome; added round border + `>` prefix + dim cursor block.
+- Mode badge `default ●` appeared orphaned; added connector glyph `╰` in PromptInputFooter.
+- Pre-flight key hint in Welcome area when `defaultProvider` has no key.
+- Version constant drift and redundant column Box cleanup.
+
 ## [0.4.0-alpha] — 2026-04-17 — FULL UI uplift (Ink + React port, 17 specs, 6 waves)
 
 **Why**: after 6 consecutive picker regressions (v0.3.10–15) from dual-owner stdin, a full 4-Opus research sweep confirmed Claude Code's `internal_eventEmitter` single-stdin pipeline structurally solves the bug class. The prior v0.3.18 "no Ink" synthesis was refuted by re-reading `/root/develop/nimbus-cli/src/ink/`. This release ports stock Ink 7 + `@inkjs/ui` 2 to replace raw readline in every CLI surface.

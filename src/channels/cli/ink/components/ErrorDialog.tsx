@@ -48,6 +48,12 @@ function showDoctorHint(code: string): boolean {
   return code.startsWith('X_') || code.startsWith('Y_');
 }
 
+// ── Toast tier — U_MISSING_CONFIG is user-recoverable; render as inline toast ──
+// Reserve bordered dialog only for X_* (security) and Y_* (system) codes.
+function isRecoverableUserError(code: string): boolean {
+  return code === 'U_MISSING_CONFIG';
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 export interface ErrorDialogProps {
   error: NimbusError;
@@ -67,6 +73,17 @@ export function ErrorDialog({ error, noColor = false, cols }: ErrorDialogProps):
   const showHint = showDoctorHint(code);
   const maskedCtx = maskSecrets(error.context);
   const ctxKeys = Object.keys(maskedCtx).filter((k) => maskedCtx[k] !== 'undefined');
+
+  // ── Inline toast for recoverable user errors (U_MISSING_CONFIG) ──────────
+  // Bordered dialog is reserved for X_* (security) and Y_* (system) codes only.
+  if (isRecoverableUserError(code)) {
+    const toastLine = `⚠ ${summary}${action ? `  ${action}` : ''}`;
+    return React.createElement(
+      Box,
+      { flexDirection: 'row', gap: 1 },
+      React.createElement(Text, { color: errorColor !== '' ? errorColor : undefined, dimColor: true }, toastLine),
+    );
+  }
 
   // ── Narrow terminal branch (cols < 60) ────────────────────────────────────
   const isNarrow = typeof cols === 'number' && cols < 60;

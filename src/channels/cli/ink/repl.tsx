@@ -26,11 +26,10 @@ import type { PermissionMode } from '../../../permissions/mode.ts';
 import type { UIHost } from '../../../core/ui/index.ts';
 import { createInkUIHost } from './uiHost.tsx';
 import { logger } from '../../../observability/logger.ts';
+import { NIMBUS_VERSION } from '../../../version.ts';
 
 // ── Version constant ───────────────────────────────────────────────────────────
-// Hardcoded to avoid a require() of JSON at module load (Bun TSC strict).
-// Updated at release time alongside package.json.
-const PKG_VERSION = '0.3.21-alpha';
+const PKG_VERSION = NIMBUS_VERSION;
 
 // ── InkReplProps ───────────────────────────────────────────────────────────────
 
@@ -47,6 +46,8 @@ export interface InkReplProps {
   onExit: () => void;
   /** setModalNode injected by mountReplApp for Ink UIHost. */
   setModalNode: (node: React.ReactNode) => void;
+  /** Pre-flight key hint shown in Welcome area when defaultProvider has no resolvable key */
+  keyHint?: string;
 }
 
 // ── InkRepl — the composition root component ──────────────────────────────────
@@ -58,6 +59,7 @@ function InkReplInner({
   onSubmit,
   onExit,
   setModalNode: _setModalNode,
+  keyHint,
 }: Omit<InkReplProps, 'workspace' | 'mode'>): React.ReactElement {
   const { workspace, mode, noColor, cols, rows } = useAppContext();
 
@@ -122,6 +124,7 @@ function InkReplInner({
           cols={cols}
           workspace={workspace.name}
           model={workspace.defaultModel}
+          keyHint={keyHint}
         />
       )}
 
@@ -194,7 +197,7 @@ function InkReplInner({
 }
 
 export function InkRepl(props: InkReplProps): React.ReactElement {
-  return <InkReplInner {...props} />;
+  return <InkReplInner {...props} keyHint={props.keyHint} />;
 }
 
 // ── mountReplApp — entry called from repl.ts ───────────────────────────────────
@@ -210,6 +213,8 @@ export interface MountReplAppOptions {
   onExit: () => void;
   /** Receives the UIHost created for the Ink path (includes canAsk for loopAdapter). */
   onUIHostReady?: (host: UIHost & { canAsk(): boolean }) => void;
+  /** Pre-flight key hint shown in Welcome area when defaultProvider has no resolvable key */
+  keyHint?: string;
 }
 
 /**
@@ -231,6 +236,7 @@ export function mountReplApp(opts: MountReplAppOptions): MountedApp {
     onSubmit,
     onExit,
     onUIHostReady,
+    keyHint,
   } = opts;
 
   // Modal node state — shared between uiHost and the Ink tree.
@@ -256,10 +262,10 @@ export function mountReplApp(opts: MountReplAppOptions): MountedApp {
     }, []);
 
     return (
-      <Box flexDirection="column">
+      <>
         {modalNode}
         {children}
-      </Box>
+      </>
     );
   }
 
@@ -277,6 +283,7 @@ export function mountReplApp(opts: MountReplAppOptions): MountedApp {
           onSubmit={onSubmit}
           onExit={onExit}
           setModalNode={setModalNode}
+          keyHint={keyHint}
         />
       </ModalHost>
     ),

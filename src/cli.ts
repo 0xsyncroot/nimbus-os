@@ -6,6 +6,7 @@ import { NimbusError } from './observability/errors.ts';
 import { logger } from './observability/logger.ts';
 import { printError } from './observability/errorFormat.ts';
 import { t, initI18n } from './i18n/format.ts';
+import { NIMBUS_VERSION } from './version.ts';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -136,7 +137,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.4.0-alpha\n');
+      process.stdout.write(`nimbus-os ${NIMBUS_VERSION}\n`);
       return 0;
     case '--help':
     case '-h':
@@ -260,7 +261,7 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.4.0-alpha';
+        const current = NIMBUS_VERSION;
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);
@@ -269,20 +270,9 @@ async function main(): Promise<number> {
         await writeInstalledVersion(current);
       }
 
-      // Auto-detect vault issues before boot
-      if (!process.env['NIMBUS_SKIP_DIAGNOSE']) {
-        const { diagnoseVault } = await import('./platform/secrets/diagnose.ts');
-        const vaultStatus = await diagnoseVault();
-        if (!vaultStatus.ok) {
-          const { runRecoveryPrompt } = await import('./onboard/recoveryPrompt.ts');
-          const { nimbusHome } = await import('./platform/paths.ts');
-          const handled = await runRecoveryPrompt(
-            { reason: vaultStatus.reason, path: nimbusHome() },
-            { tty: Boolean(process.stdin.isTTY) },
-          );
-          if (!handled) return 2;
-        }
-      }
+      // NOTE: boot-time diagnoseVault block removed in v0.4.0.1-alpha (HARD RULE §10).
+      // autoProvisionPassphrase() in startReplInk already surfaces X_CRED_ACCESS/vault_locked
+      // cleanly without writing any files. Diagnose is user-initiated via `nimbus debug vault status`.
 
       const { getActiveWorkspace } = await import('./core/workspace.ts');
       const active = await getActiveWorkspace();

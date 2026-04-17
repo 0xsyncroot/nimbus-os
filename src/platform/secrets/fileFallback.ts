@@ -473,8 +473,9 @@ export async function autoProvisionPassphrase(
 
 /** Read the vault envelope from disk without decrypting, for probe purposes.
  *  Returns null if the file is missing. Returns null for corrupt/too-large
- *  vaults — those cases are surfaced later by diagnoseVault / loadData. */
-async function readVaultEnvelopeForProbe(): Promise<VaultEnvelope | null> {
+ *  vaults — those cases are surfaced later by diagnoseVault / loadData.
+ *  Exported for probe-before-write guards in recovery flows (FIX 1B). */
+export async function readVaultEnvelopeForProbe(): Promise<VaultEnvelope | null> {
   try {
     const existing = await readVault();
     return existing?.envelope ?? null;
@@ -487,8 +488,9 @@ async function readVaultEnvelopeForProbe(): Promise<VaultEnvelope | null> {
 }
 
 /** Try to decrypt the vault with the given passphrase. Returns true on
- *  success, false on tag-verify / parse failure. Never throws. */
-function canDecryptVault(envelope: VaultEnvelope, passphrase: string): boolean {
+ *  success, false on tag-verify / parse failure. Never throws.
+ *  Exported for probe-before-write guards in recovery flows (FIX 1B). */
+export function canDecryptVault(envelope: VaultEnvelope, passphrase: string): boolean {
   try {
     const salt = Buffer.from(envelope.salt, 'hex');
     const iv = Buffer.from(envelope.iv, 'hex');

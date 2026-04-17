@@ -308,15 +308,25 @@ export function PromptInput({
     );
   });
 
+  // ── Cursor block — shown when buffer is empty (dim, indicates ready state) ──
+  const emptyWithCursor = isEmpty && !modePrefix
+    ? <Text dimColor>{placeholder}<Text inverse> </Text></Text>
+    : null;
+
   return (
     <Box flexDirection="column">
-      {isEmpty && !modePrefix ? (
-        <Text dimColor>{placeholder}</Text>
-      ) : (
-        <Box flexDirection="column">
-          {renderLines}
+      <Box borderStyle="round" borderColor="gray" paddingX={1}>
+        <Box flexDirection="row">
+          <Text dimColor>{'> '}</Text>
+          <Box flexDirection="column">
+            {emptyWithCursor ?? (
+              <Box flexDirection="column">
+                {renderLines}
+              </Box>
+            )}
+          </Box>
         </Box>
-      )}
+      </Box>
       {showCtrlCHint && (
         <Text dimColor>Press Ctrl-C again to exit</Text>
       )}

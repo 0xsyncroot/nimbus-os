@@ -120,6 +120,20 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
     defaultModel: loaded.meta.defaultModel,
   };
 
+  // ── Pre-flight key hint (Bug 5) ───────────────────────────────────────────
+  // If defaultProvider has no resolvable key, show a friendly single-line hint
+  // in the Welcome area before the user's first submit (avoids fatal ErrorDialog).
+  let preflightKeyHint: string | undefined;
+  try {
+    const { resolveProviderKey } = await import('../../providers/registry.ts');
+    await resolveProviderKey({
+      providerId: loaded.meta.defaultProvider,
+      wsId: loaded.meta.id,
+    });
+  } catch {
+    preflightKeyHint = `No API key set for "${loaded.meta.defaultProvider}". Run \`/key set\` to add one.`;
+  }
+
   // ── Shared UIHost slot — set after Ink mounts ──────────────────────────────
   let inkUIHost: LoopUIHost | undefined;
 
@@ -184,9 +198,8 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
       provider = await getProvider();
     } catch (err) {
       if (err instanceof NimbusError) {
-        const formatted = formatBootError({ code: err.code, context: err.context }, 'vi');
         logger.warn({ code: err.code, context: err.context }, 'provider init failed (ink path)');
-        // Publish to event bus so ErrorDialog picks it up
+        // Publish to event bus so ErrorDialog picks it up; no stderr write (Bug 1 fix: prevents Ink frame anchor scroll)
         const { getGlobalBus } = await import('../../core/events.ts');
         const { TOPICS } = await import('../../core/eventTypes.ts');
         getGlobalBus().publish(TOPICS.ui.error, {
@@ -194,7 +207,6 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
           error: err,
           ts: Date.now(),
         });
-        process.stderr.write(`[nimbus] ${formatted.line}\n`);
       } else {
         logger.error({ err: (err as Error).message }, 'provider init failed (ink path)');
       }
@@ -267,6 +279,7 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
     onSubmit: (value: string) => { void handleSubmit(value); },
     onExit: () => { mounted.unmount(); },
     onUIHostReady: (host: LoopUIHost) => { inkUIHost = host; },
+    keyHint: preflightKeyHint,
   });
 
   // SIGINT / SIGTERM: unmount Ink cleanly + restore terminal (SPEC-851 §2.1)

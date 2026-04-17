@@ -9,9 +9,10 @@ import { detect } from '../../platform/detect.ts';
 import { diagnoseVault } from '../../platform/secrets/diagnose.ts';
 import { getActiveWorkspace } from '../../core/workspace.ts';
 import { t } from '../../i18n/format.ts';
+import { NIMBUS_VERSION } from '../../version.ts';
 
 const VAULT_KEY_FILENAME = '.vault-key';
-const CURRENT_VERSION = '0.4.0-alpha';
+const CURRENT_VERSION = NIMBUS_VERSION;
 
 export interface CheckRow {
   label: string;

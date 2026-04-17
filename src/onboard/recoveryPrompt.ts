@@ -5,11 +5,13 @@
 //   - Backup before any mutation: secrets.enc → secrets.enc.bak-{ts}-corrupt
 //   - Backup rotation: keep last 5 corrupt backups (prune older by mtime)
 //   - No passphrase logged
+//   - FIX 1B: probe-before-write — skip backup if vault already decrypts OK (defense in depth)
 
 import { chmod, copyFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { nimbusHome } from '../platform/paths.ts';
 import type { VaultStatusReason } from '../platform/secrets/diagnose.ts';
+import { canDecryptVault, readVaultEnvelopeForProbe } from '../platform/secrets/fileFallback.ts';
 
 const VAULT_FILENAME = 'secrets.enc';
 const MAX_CORRUPT_BACKUPS = 5;
@@ -28,7 +30,19 @@ function corruptBackupPath(): string {
   return join(nimbusHome(), `secrets.enc.bak-${ts}-corrupt`);
 }
 
-async function backupCorruptVault(): Promise<void> {
+async function backupCorruptVault(): Promise<{ ok: boolean; skipped?: boolean }> {
+  // FIX 1B — probe-before-write: if the vault can be decrypted by the current
+  // passphrase source, it is NOT corrupt. Skip the backup to avoid misleading
+  // "-corrupt" labeled files and spurious writes (HARD RULE §10).
+  const provisionedPassphrase = process.env['NIMBUS_VAULT_PASSPHRASE'] ?? null;
+  if (provisionedPassphrase) {
+    const envelope = await readVaultEnvelopeForProbe();
+    if (envelope && canDecryptVault(envelope, provisionedPassphrase)) {
+      // Vault decrypts fine — not actually corrupt. Bail without writing.
+      return { ok: true, skipped: true };
+    }
+  }
+
   const src = join(nimbusHome(), VAULT_FILENAME);
   const dst = corruptBackupPath();
   try {
@@ -41,6 +55,7 @@ async function backupCorruptVault(): Promise<void> {
     // vault may not exist — silently skip
   }
   await pruneCorruptBackups();
+  return { ok: true };
 }
 
 async function pruneCorruptBackups(): Promise<void> {
