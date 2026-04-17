@@ -7,6 +7,7 @@ import React from 'react';
 import { render, cleanup } from 'ink-testing-library';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { nimbusHome } from '../../../../src/platform/paths.ts';
 import {
   __resetRegistry,
   registerDefaultCommands,
@@ -463,19 +464,16 @@ describe('SPEC-842 T3: validateFileRef SENSITIVE_PATTERNS', () => {
 
 describe('SPEC-842: nimbus internals sensitive paths', () => {
   test('secrets.enc under nimbusHome is blocked', () => {
-    // nimbusHome() on Linux = ~/.local/share/nimbus
-    const home = homedir();
-    const xdgData = process.env['XDG_DATA_HOME'] ?? join(home, '.local', 'share');
-    const nimbusSecrets = join(xdgData, 'nimbus', 'secrets.enc');
+    // Use nimbusHome() so path is correct on Linux, macOS, and Windows.
+    const nimbusSecrets = join(nimbusHome(), 'secrets.enc');
     const result = inspectPath(nimbusSecrets);
     expect(result.matched).toBe(true);
     expect(result.label).toBe('nimbus:secrets');
   });
 
   test('nimbus config.json is blocked', () => {
-    const home = homedir();
-    const xdgData = process.env['XDG_DATA_HOME'] ?? join(home, '.local', 'share');
-    const nimbusConfig = join(xdgData, 'nimbus', 'config.json');
+    // Use nimbusHome() so path is correct on Linux, macOS, and Windows.
+    const nimbusConfig = join(nimbusHome(), 'config.json');
     const result = inspectPath(nimbusConfig);
     expect(result.matched).toBe(true);
     expect(result.label).toBe('nimbus:config');

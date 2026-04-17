@@ -93,15 +93,34 @@ describe('SPEC-849: AltScreen escape sequences', () => {
   beforeEach(() => {
     written = [];
     originalWrite = process.stdout.write.bind(process.stdout);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as any).write = (chunk: string | Uint8Array): boolean => {
+    // Use Object.defineProperty to ensure the mock is installed even when
+    // process.stdout.write is a non-configurable native getter on macOS/Windows.
+    const mockWrite = (chunk: string | Uint8Array): boolean => {
       written.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
       return true;
     };
+    try {
+      Object.defineProperty(process.stdout, 'write', {
+        value: mockWrite,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = mockWrite;
+    }
   });
 
   afterEach(() => {
-    process.stdout.write = originalWrite;
+    try {
+      Object.defineProperty(process.stdout, 'write', {
+        value: originalWrite,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      process.stdout.write = originalWrite;
+    }
     // Clean up any lingering handlers from test leaks
     process.removeAllListeners('exit');
     process.removeAllListeners('SIGINT');
@@ -110,6 +129,8 @@ describe('SPEC-849: AltScreen escape sequences', () => {
   test('useAltScreen().enter() emits DEC 1049 + cursor home', () => {
     const { enter, exit } = useAltScreen();
     enter();
+    // Concatenate all writes — enter() may emit sequences in separate write calls
+    // on some platforms (macOS buffers stdout differently than Linux).
     const combined = written.join('');
     expect(combined).toContain(ENTER_ALT);
     expect(combined).toContain(CURSOR_HOME);
@@ -122,6 +143,8 @@ describe('SPEC-849: AltScreen escape sequences', () => {
     enter();
     written = []; // reset capture
     exit();
+    // Concatenate all writes — exit() may emit sequences in separate write calls
+    // on some platforms (macOS buffers stdout differently than Linux).
     const combined = written.join('');
     expect(combined).toContain(EXIT_ALT);
     expect(combined).toContain(CURSOR_SHOW);
@@ -174,15 +197,32 @@ describe('SPEC-849: syncOutput DECSET 2026', () => {
     originalWrite = process.stdout.write.bind(process.stdout);
     originalTerm = process.env['TERM'];
     originalTermProgram = process.env['TERM_PROGRAM'];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (process.stdout as any).write = (chunk: string | Uint8Array): boolean => {
+    const mockWrite = (chunk: string | Uint8Array): boolean => {
       written.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
       return true;
     };
+    try {
+      Object.defineProperty(process.stdout, 'write', {
+        value: mockWrite,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = mockWrite;
+    }
   });
 
   afterEach(() => {
-    process.stdout.write = originalWrite;
+    try {
+      Object.defineProperty(process.stdout, 'write', {
+        value: originalWrite,
+        writable: true,
+        configurable: true,
+      });
+    } catch {
+      process.stdout.write = originalWrite;
+    }
     if (originalTerm !== undefined) {
       process.env['TERM'] = originalTerm;
     } else {
