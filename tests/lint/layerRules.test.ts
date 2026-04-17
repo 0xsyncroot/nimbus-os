@@ -8,6 +8,7 @@
 // Instead we test the rule logic directly, keeping the test fast and dependency-free.
 
 import { describe, expect, test } from 'bun:test';
+import { fileURLToPath } from 'node:url';
 import { LAYER_RULES, toEslintNoRestrictedPaths, type LayerRule } from '../../scripts/lint/layerRules.ts';
 
 // ── LAYER_RULES shape ─────────────────────────────────────────────────────────
@@ -134,19 +135,22 @@ describe('SPEC-833: toEslintNoRestrictedPaths()', () => {
 // ── V1 fix verification: Telegram.ts no longer imports channels/ ─────────────
 
 describe('SPEC-833: V1 fix — Telegram.ts does not import channels/', () => {
+  // Use fileURLToPath to convert file:// URL to OS-native absolute path.
+  // On Windows, URL.pathname yields `/C:/...` which Bun.file cannot resolve;
+  // fileURLToPath correctly produces `C:\\...`. Cross-platform safe.
+  const telegramPath = fileURLToPath(
+    new URL('../../src/tools/builtin/Telegram.ts', import.meta.url),
+  );
+
   test('src/tools/builtin/Telegram.ts has no direct channels/ import', async () => {
-    const file = await Bun.file(
-      new URL('../../src/tools/builtin/Telegram.ts', import.meta.url).pathname,
-    ).text();
+    const file = await Bun.file(telegramPath).text();
     // Must NOT contain a direct import of src/channels/**
     const hasChannelsImport = /from\s+['"].*channels\/(?!.*channelPorts)/.test(file);
     expect(hasChannelsImport).toBe(false);
   });
 
   test('src/tools/builtin/Telegram.ts imports channelPorts (abstract port)', async () => {
-    const file = await Bun.file(
-      new URL('../../src/tools/builtin/Telegram.ts', import.meta.url).pathname,
-    ).text();
+    const file = await Bun.file(telegramPath).text();
     expect(file).toContain('channelPorts');
   });
 });
@@ -154,10 +158,12 @@ describe('SPEC-833: V1 fix — Telegram.ts does not import channels/', () => {
 // ── V1 fix verification: todoWriteTool.ts no longer imports channels/ ─────────
 
 describe('SPEC-833: V1 fix — todoWriteTool.ts does not import channels/', () => {
+  const todoWritePath = fileURLToPath(
+    new URL('../../src/tools/todoWriteTool.ts', import.meta.url),
+  );
+
   test('src/tools/todoWriteTool.ts has no channels/ import', async () => {
-    const file = await Bun.file(
-      new URL('../../src/tools/todoWriteTool.ts', import.meta.url).pathname,
-    ).text();
+    const file = await Bun.file(todoWritePath).text();
     const hasChannelsImport = /from\s+['"].*channels\//.test(file);
     expect(hasChannelsImport).toBe(false);
   });
