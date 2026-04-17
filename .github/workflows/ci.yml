@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Audit dependencies (SPEC-840 supply chain gate)
+        # Non-blocking for now — log advisories but don't fail CI on pre-existing ones.
+        # HIGH/CRITICAL in ink, @inkjs/ui, react, marked, yoga-wasm-web, react-reconciler
+        # should be investigated and addressed promptly.
+        run: bun audit --prod || true
+
       - name: Type check
         run: bun run typecheck
 

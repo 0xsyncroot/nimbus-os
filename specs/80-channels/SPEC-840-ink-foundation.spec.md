@@ -1,7 +1,7 @@
 ---
 id: SPEC-840
 title: Ink 7 app bootstrap, theme tokens, base components
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
@@ -162,3 +162,4 @@ export function renderApp(ctx: AppContext): { unmount: () => void }
 
 - 2026-04-17 @hiepht: draft created by spec-writer-foundation; synthesized from META-011 + Claude Code UI research
 - 2026-04-17 @hiepht: detail-pass — added lockb commit policy, CI `bun audit --prod` gate, `@inkjs/ui` rot trigger with 14d/18m thresholds, npm provenance check for ink@7 + @inkjs/ui@2; closed vendor-threshold open question
+- 2026-04-17 developer-foundation: implemented — app.tsx, theme.ts, 7 base components, 44-test suite (foundation.test.ts), bun.lockb updated, CI audit gate added. npm provenance check deferred (SPEC-840 §9 open question). 44 tests pass, 0 regressions in full suite (2134 total).

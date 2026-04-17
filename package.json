@@ -55,6 +55,14 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.40.0",
+    "@inkjs/ui": "2.0.0",
+    "cli-spinners": "3.4.0",
+    "figures": "6.1.0",
+    "ink": "7.0.1",
+    "react": "19.2.0",
+    "react-reconciler": "0.29.2",
+    "string-width": "8.2.0",
+    "wrap-ansi": "10.0.0",
     "@modelcontextprotocol/sdk": "^1.10.2",
     "@mozilla/readability": "^0.5.0",
     "graceful-fs": "^4.2.11",
@@ -69,6 +77,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.1.14",
+    "@types/react": "19.2.3",
+    "ink-testing-library": "4.0.0",
     "@types/shell-quote": "^1.7.5",
     "@types/turndown": "^5.0.4",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
