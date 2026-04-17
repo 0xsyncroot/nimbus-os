@@ -218,8 +218,7 @@ function decideByMode(
   const ruleDecision = matchRule(rules, inv);
   if (ruleDecision !== 'no-match') {
     if (ruleDecision === 'ask') {
-      const key = askCacheKey(inv);
-      if (key && cache.allows.has(key)) return 'allow';
+      if (cache.allows.has(askCacheKey(inv))) return 'allow';
     }
     return ruleDecision;
   }
@@ -229,9 +228,12 @@ function decideByMode(
   // adapter's onAsk→rememberAllow→re-run flow would still see 'ask' on the
   // second canUseTool call, leaving the user stuck in a permission loop that
   // surfaces as a generic "Tool failed" error.
+  //
+  // v0.3.19 URGENT: key derivation now matches loopAdapter.askRuleKey for
+  // no-target tools (name-only fallback), so this works for TelegramStatus
+  // and other schema-less tools too.
   if (DESTRUCTIVE_TOOLS.has(inv.name) || !READONLY_ALLOWED_TOOLS.has(inv.name)) {
-    const key = askCacheKey(inv);
-    if (key && cache.allows.has(key)) return 'allow';
+    if (cache.allows.has(askCacheKey(inv))) return 'allow';
   }
 
   // No rule matched. Safe tools auto-allow, destructive tools ask.
@@ -242,10 +244,14 @@ function decideByMode(
   return 'ask';
 }
 
-function askCacheKey(inv: ToolInvocation): string | null {
+// v0.3.19 URGENT: Key derivation MUST mirror loopAdapter.askRuleKey exactly —
+// otherwise rememberAllow() writes key=`${name}` but the cache lookup here
+// returns null and always misses, so re-run hits 'ask' again and the user's
+// "Yes" is effectively ignored. Affects all tools with no path/cmd/url/query
+// input (TelegramStatus, ConnectTelegram, TodoWrite, ExitPlanMode).
+function askCacheKey(inv: ToolInvocation): string {
   const target = extractMatchTarget(inv);
-  if (target === null) return null;
-  return `${inv.name}:${target}`;
+  return target !== null ? `${inv.name}:${target}` : inv.name;
 }
 
 function runPathValidator(inv: ToolInvocation, ctx: PermissionContext): { error: NimbusError; reason: string } | null {

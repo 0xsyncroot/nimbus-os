@@ -153,4 +153,54 @@ describe('SPEC-825 + v0.3.4 Bug B: loopAdapter onAsk flow', () => {
     expect(String(res.content)).toContain('user_denied');
     expect(handlerCalls).toBe(0);
   });
+
+  // REGRESSION v0.3.19: user pressed "Yes" on TelegramStatus confirm but the
+  // tool was still denied. Root cause: loopAdapter.askRuleKey falls back to
+  // `name` when extractMatchTarget returns null (no path/cmd/url/query input),
+  // but gate.askCacheKey returns null in that case → cache lookup always
+  // misses → second runOnce re-hits 'ask' → loopAdapter returns needs_confirm
+  // → user sees "You denied this action.". Affected: all tools with no
+  // path/cmd/url/query input (TelegramStatus, ConnectTelegram, TodoWrite,
+  // ExitPlanMode, etc.). Must use the SAME key-derivation on both sides.
+  test('allow → no-target tool (no path/cmd/url) still re-executes successfully', async () => {
+    const reg = createRegistry();
+    let handlerCalls = 0;
+    reg.register({
+      name: 'TelegramStatus',
+      description: 'report telegram status',
+      readOnly: true,
+      inputSchema: z.object({}).strict(),
+      async handler() {
+        handlerCalls++;
+        return { ok: true as const, output: { connected: false }, display: 'ok' };
+      },
+    });
+    const gate = createGate({ rules: compileRules([]), audit: noopAudit });
+
+    const askCalls: string[] = [];
+    const adapter = createLoopAdapter({
+      registry: reg,
+      permissions: gate,
+      workspaceId: 'W1',
+      sessionId: 'S1',
+      cwd: '/tmp/project',
+      mode: 'default',
+      onAsk: async (inv) => {
+        askCalls.push(inv.name);
+        return 'allow';
+      },
+    });
+
+    const signal = new AbortController().signal;
+    const res = await adapter.execute(
+      { toolUseId: 'call_1', name: 'TelegramStatus', input: {} },
+      signal,
+    );
+
+    // onAsk MUST have been consulted exactly once.
+    expect(askCalls).toEqual(['TelegramStatus']);
+    // After 'allow', handler MUST have run and tool MUST have succeeded.
+    expect(handlerCalls).toBe(1);
+    expect(res.ok).toBe(true);
+  });
 });

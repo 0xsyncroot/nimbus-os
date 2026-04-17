@@ -217,4 +217,67 @@ describe('SPEC-832: createCliUIHost', () => {
     );
     expect(result.kind).toBe('cancel');
   });
+
+  // REGRESSION v0.3.19: user pressed Enter on "Yes" (cursor=0) but tool was
+  // denied. The root cause is that confirm intent is dispatched through the
+  // UIHost contract without the options array, so confirmPick picks from a
+  // hard-coded list but downstream code in loopAdapter didn't map 'allow'
+  // correctly OR the picker returned the wrong value for cursor=0.
+  // This test drives a real EventEmitter-backed stdin and fires a 'return'
+  // keypress after the priming window, then asserts the UIResult value is
+  // exactly 'allow' — NOT 'Yes', NOT 'deny', NOT undefined.
+  it('REGRESSION v0.3.19: Enter on default cursor (Yes) returns value="allow"', async () => {
+    const { EventEmitter } = await import('node:events');
+    // Build a fake TTY stdin that can emit real keypress events
+    const stdinBase = new EventEmitter();
+    const stdin = Object.assign(stdinBase, {
+      isTTY: true,
+      setRawMode: (_: boolean) => stdinBase,
+      resume: () => stdinBase,
+      pause: () => stdinBase,
+      read: () => null,
+      pipe: () => stdinBase,
+      unpipe: () => stdinBase,
+    }) as unknown as NodeJS.ReadableStream & {
+      setRawMode?: (r: boolean) => unknown;
+      isTTY?: boolean;
+    };
+    const stdout = makeOutputStream();
+
+    const host = createCliUIHost({ stdin, stdout, isTTY: true, colorEnabled: false });
+    expect(host.canAsk()).toBe(true);
+
+    // Shorten priming window for test determinism.
+    const prevPriming = process.env['NIMBUS_PICKER_PRIMING_MS'];
+    process.env['NIMBUS_PICKER_PRIMING_MS'] = '20';
+
+    const ctx = makeContext();
+    const askPromise = host.ask<'allow' | 'deny' | 'always' | 'never'>(
+      { kind: 'confirm', prompt: 'Allow tool: TelegramStatus?' },
+      ctx,
+    );
+
+    // Fire Enter after priming window has elapsed.
+    setTimeout(() => {
+      stdinBase.emit('keypress', '\r', {
+        name: 'return',
+        ctrl: false,
+        meta: false,
+        shift: false,
+        sequence: '\r',
+      });
+    }, 60);
+
+    const result = await askPromise;
+
+    // Restore priming env
+    if (prevPriming !== undefined) process.env['NIMBUS_PICKER_PRIMING_MS'] = prevPriming;
+    else delete process.env['NIMBUS_PICKER_PRIMING_MS'];
+
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      // User pressed Enter on cursor=0 (Yes) → value MUST be 'allow'.
+      expect(result.value).toBe('allow');
+    }
+  });
 });
