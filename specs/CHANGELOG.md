@@ -2,6 +2,50 @@
 
 Chronological record of spec-level decisions. Format: `YYYY-MM-DD @owner: decision + reason`.
 
+## 2026-04-17 — v0.3.15-alpha URGENT: picker priming window against phantom keypress (5th regression)
+
+- @hiepht: **Root cause (finally)** — the fifth picker regression (v0.3.10 →
+  v0.3.14) was never in the parser. It was input bytes bleeding across the
+  autocomplete→picker handoff. Trace evidence (repl-repro.ts): user types
+  `lại xem\r` at the REPL, autocomplete's `onData('\r')` fires `enter`,
+  resolves `readLine`, and calls `cleanup()` which toggles `setRawMode(false)`
+  + `removeListener('data', onData)`. Between turns, stdin stays attached
+  to the Node/Bun stream machinery; bytes that arrive (or that the kernel
+  line-discipline re-releases when `setRawMode(true)` is later called by
+  the picker) sit in the readable queue. When `confirmPick` then calls
+  `emitKeypressEvents(input)` + `setRawMode(true)` + `resume()`, those
+  queued bytes flush into the keypress decoder — the first event the
+  picker sees is phantom. Screenshot A = phantom `return` → instant
+  `allow`/`deny`. Screenshot B = phantom `down` events → cursor stuck on
+  `Always`.
+- @hiepht: **Fix (SPEC-901 v0.3.15)** — defense-in-depth in `pickOne`:
+  (A) drain `input.read()` BEFORE attaching the keypress listener to
+  evict any bytes already queued inside the Node readable's internal
+  buffer, (B) 80ms PRIMING WINDOW — keypresses that arrive in the first
+  80ms after listener attach are silently swallowed (no human can respond
+  in <200ms; any key arriving that fast is necessarily a buffered
+  leftover), (C) drain AGAIN after setRawMode(true)+resume() to catch
+  bytes flushed by the kernel mode toggle. Parser unchanged (still
+  `readline.emitKeypressEvents` — no more rolling our own).
+- @hiepht: **Collateral fix in `slashAutocomplete`** — the paste branch
+  (`data.length > 1`) previously swallowed a trailing `\r`/`\n` if an
+  entire REPL line arrived in one chunk (fast IME / PTY scheduling),
+  meaning Enter was never registered. Now split on newline inside
+  `onData` paste handling and synthesise an enter.
+- @hiepht: **Gate-B extension** — two new PTY smoke tests in
+  `tests/onboard/picker.pty.smoke.test.ts` assert phantom Enter / Down
+  arriving immediately after picker prompt render are swallowed and a
+  subsequent legit Enter resolves correctly. Unit tests set
+  `NIMBUS_PICKER_PRIMING_MS=0` so synthetic-stream tests still pass.
+  PTY harness `scripts/pty-smoke/repl-repro*.ts` + python driver
+  `scripts/pty-smoke/...py` reproduce the full REPL→picker race
+  deterministically.
+- @hiepht: 1955 non-HTTP tests pass, typecheck clean. Binary compiled
+  + installed at `/root/.nimbus/bin/nimbus` (v0.3.15-alpha) and tested
+  end-to-end: scenario 1-6 from user brief all PASS under real
+  pseudo-terminal with `[picker-trace]` confirming priming absorbs
+  phantom events without blocking legit keystrokes.
+
 ## 2026-04-17 — v0.3.14-alpha URGENT: picker stop rolling own keystroke parser
 
 - @hiepht: **SPEC-901 v0.3.14 rewrite** — after four consecutive TTY picker

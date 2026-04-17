@@ -259,3 +259,77 @@ describeIf('SPEC-901 v0.3.14: picker PTY smoke (real pseudo-terminal)', () => {
     expect(parseResult(stdout)).toBe('deny');
   }, 10_000);
 });
+
+// ---------------------------------------------------------------------------
+// v0.3.15 priming-window regression guard — the exact bug the user reported:
+// phantom Enter/Down fires the instant the picker opens; picker resolves
+// before the user saw anything. The picker's 80ms priming window swallows
+// these early events. Tests below:
+//
+//   1. Immediate Enter INSIDE priming → swallowed; 200ms later Enter → resolve
+//   2. Immediate Down INSIDE priming → swallowed; 200ms later Enter → cursor
+//      still at 0 (allow), proving the Down was absorbed.
+// ---------------------------------------------------------------------------
+
+/** Scenario runner that sends the first key WITHOUT the 150ms settle delay —
+ *  i.e. INSIDE the picker's 80ms priming window — then waits past priming
+ *  and sends a follow-up Enter. Used to verify phantom-byte absorption.
+ *  Always times out at `timeoutMs` to prevent stuck tests from hanging CI. */
+async function runScenarioPhantomThenEnter(
+  libc: Libc,
+  phantomKey: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; exitCode: number | null }> {
+  const pty = openPty(libc);
+  const slaveFd = openSync(pty.slavePath, O_RDWR);
+  let child: Subprocess | null = null;
+  try {
+    child = spawn({
+      cmd: ['bun', 'run', harnessPath, 'confirm'],
+      stdin: slaveFd,
+      stdout: slaveFd,
+      stderr: slaveFd,
+      env: { ...process.env, FORCE_COLOR: '0', TERM: 'xterm-256color' },
+    });
+    try { closeSync(slaveFd); } catch { /* ignore */ }
+    await readUntil(pty.masterFd, (s) => /Do it\?/.test(s), timeoutMs);
+    // Phantom: inject IMMEDIATELY — inside the 80ms priming window.
+    writeSync(pty.masterFd, phantomKey);
+    // Wait past priming (200 > 80).
+    await new Promise((r) => setTimeout(r, 200));
+    // Legit Enter.
+    writeSync(pty.masterFd, '\r');
+    const out = await readUntil(
+      pty.masterFd,
+      (s) => /<<RESULT:[a-z]+>>/.test(s),
+      timeoutMs,
+    );
+    const exitCode = await child.exited;
+    return { stdout: out, exitCode };
+  } finally {
+    try { child?.kill(); } catch { /* ignore */ }
+    pty.close();
+  }
+}
+
+describeIf('SPEC-901 v0.3.15: picker priming window (phantom-byte absorption)', () => {
+  let libc: Libc | null = null;
+
+  beforeAll(() => {
+    libc = loadLibc();
+  });
+
+  test('phantom Enter within priming window is swallowed; later Enter resolves', async () => {
+    if (!libc) { expect(true).toBe(true); return; }
+    const { stdout } = await runScenarioPhantomThenEnter(libc, '\r', 5000);
+    expect(parseResult(stdout)).toBe('allow');
+  }, 15_000);
+
+  test('phantom ArrowDown within priming is swallowed; cursor stays at 0', async () => {
+    if (!libc) { expect(true).toBe(true); return; }
+    // Without priming: phantom Down moves cursor to 'deny'; Enter → 'deny'.
+    // With priming: Down swallowed; Enter resolves the default 'allow'.
+    const { stdout } = await runScenarioPhantomThenEnter(libc, '\u001b[B', 5000);
+    expect(parseResult(stdout)).toBe('allow');
+  }, 15_000);
+});

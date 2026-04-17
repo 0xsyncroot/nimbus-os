@@ -1,29 +1,53 @@
-// picker.ts — SPEC-901 v0.3.14: generic TTY picker for init wizard.
-// Extracted from src/catalog/picker.ts pattern — ↑↓ navigate, Enter select, 'c' custom, 's' skip.
+// picker.ts — SPEC-901 v0.3.15: generic TTY picker for init wizard + tool-confirm.
 //
-// v0.3.14 URGENT REWRITE: stop rolling our own keystroke parser. Use Node's
-// built-in `readline.emitKeypressEvents(stream)` — the reference keypress
-// parser used by Claude Code (via ink's `useInput`), `node:repl`, and
-// virtually every interactive CLI in the Node ecosystem.
+// v0.3.15 URGENT (fifth regression on same picker): the prior rewrite (v0.3.14)
+// using readline.emitKeypressEvents solved chunk-split ANSI parsing but did
+// NOT solve the "ghost keypress on picker open" bug the user keeps hitting:
+// the picker attaches its keypress listener and IMMEDIATELY receives a
+// synthetic `return`/`down` event that the user never typed, resolving the
+// picker before render even finishes.
 //
-// What that gets us (for free):
-//  * correct ANSI escape parsing across chunk splits (arrow keys delivered as
-//    `\x1b` in one chunk and `[A` in the next — v0.3.13's parseKeys emitted
-//    a bare ESC then later emitted unrelated bytes, causing the arrow to
-//    land on the wrong action).
-//  * proper multi-byte UTF-8 grouping (so Vietnamese "ỉ" doesn't fire a
-//    stray single-byte shortcut).
-//  * Ctrl+key recognition via the `key.ctrl` boolean (no magic `\u0003`
-//    comparison).
-//  * idempotent setup — calling emitKeypressEvents twice on the same stream
-//    is a no-op, which matters because autocomplete and the picker both
-//    touch stdin during a single REPL turn.
+// Root cause (confirmed by PTY trace in scripts/pty-smoke/repl-repro.ts):
 //
-// History of failures this replaces:
+//   1. Autocomplete consumes user's `\r` and resolves its readLine promise.
+//   2. Cleanup calls `setRawMode(false)` + removeListener('data', onData).
+//   3. Between REPL turns, stdin is still attached to the Node/Bun stream
+//      machinery. Any byte that arrives while no raw-mode reader is active
+//      — including bytes already in-flight in Node's internal buffer when
+//      the prior listener was removed — sits in the stream's readable queue.
+//   4. Picker opens: `readline.emitKeypressEvents(input)` installs/reuses
+//      the keypress decoder, `setRawMode(true)` + `resume()` flushes the
+//      queued bytes into the decoder, which emits `keypress` to the listener
+//      we just attached. First event the user sees is phantom.
+//
+// The previous five attempts (v0.3.10–v0.3.14) tried to fix this by rewriting
+// the byte parser. That's the wrong layer — the parser was never wrong. The
+// bug is input bytes bleeding across the autocomplete→picker handoff.
+//
+// Fix strategy (defense-in-depth):
+//
+//  A. DRAIN stdin BEFORE attaching the picker listener. `stream.read()` on a
+//     paused readable returns any bytes already queued internally, which we
+//     discard. Runs inside a setImmediate tick so Node's internal buffer has
+//     settled after the prior listener's removal.
+//
+//  B. PRIMING WINDOW: for the first ~80ms after attach, silently swallow any
+//     keypress. No human can react from "picker render finished" to a key
+//     press in <200ms (human reaction time baseline). Any key arriving in
+//     80ms is necessarily a buffered / replayed / cross-turn leftover, NEVER
+//     a legitimate user response. This is the same pattern used by
+//     enquirer/inquirer's internal `_isKeypress` gate.
+//
+//  C. PARSER UNCHANGED: still use readline.emitKeypressEvents (industry
+//     standard, handles ANSI+UTF-8 correctly). No more rolling our own.
+//
+// History of failures:
 //  * v0.3.10 double echo "yy" — handler attached before setRawMode(true).
 //  * v0.3.11 autocomplete cleanup racing rawMode acquisition.
 //  * v0.3.12 shortcut fired on stray buffered byte from prior REPL line.
 //  * v0.3.13 parseKeys emitted wrong keys for chunk-split ANSI sequences.
+//  * v0.3.14 emitKeypressEvents fixed parsing but byte-bleed into new
+//    listener still caused phantom Enter/Down on picker open.
 
 import readline from 'node:readline';
 
@@ -48,10 +72,12 @@ type PickerIO = {
 
 export type PickOneResult<T> = T | { custom: string } | 'skip';
 
-/** Four-way confirm picker used for tool-permission prompts.
- *  v0.3.14: arrow+Enter only (no single-char shortcuts — those fired on stray
- *  bytes from prior REPL input). Stray bytes are ignored by the keypress
- *  handler (unknown key → no state change). */
+/** Priming window — silently drop keypresses that arrive in the first
+ *  PRIMING_WINDOW_MS after the listener attaches. See file header.
+ *  Configurable via NIMBUS_PICKER_PRIMING_MS for tests; default 80ms. */
+const DEFAULT_PRIMING_WINDOW_MS = 80;
+
+/** Four-way confirm picker used for tool-permission prompts. */
 export async function confirmPick(
   question: string,
   io?: PickerIO,
@@ -136,6 +162,37 @@ interface KeypressKey {
   sequence?: string;
 }
 
+/** Drain any bytes already queued inside Node's readable stream state.
+ *  Safe to call whether the stream is paused or flowing; `read()` returns
+ *  null when empty. Called BEFORE attaching our listener so those bytes
+ *  can never reach us as keypress events.
+ *
+ *  Explanation: between REPL turns, bytes arrive on stdin while no reader
+ *  is attached. Node buffers them inside the readable stream's internal
+ *  state (stream._readableState.buffer). `stream.read()` pulls from that
+ *  buffer. We loop until empty to evict the carry-over. */
+function drainStdin(input: NodeJS.ReadableStream): number {
+  let bytesDrained = 0;
+  const readable = input as unknown as { read: (n?: number) => unknown; readableLength?: number };
+  if (typeof readable.read !== 'function') return 0;
+  // Cap drain to 64KB — a legitimate buffered user line is at most a
+  // few hundred bytes; anything larger is a programming error, not
+  // user input.
+  const MAX_DRAIN_BYTES = 64 * 1024;
+  for (let i = 0; i < 128 && bytesDrained < MAX_DRAIN_BYTES; i++) {
+    const chunk = readable.read();
+    if (chunk === null || chunk === undefined) break;
+    if (typeof chunk === 'string') {
+      bytesDrained += Buffer.byteLength(chunk, 'utf8');
+    } else if (chunk instanceof Uint8Array) {
+      bytesDrained += chunk.length;
+    } else if (typeof (chunk as { length?: number }).length === 'number') {
+      bytesDrained += (chunk as { length: number }).length;
+    }
+  }
+  return bytesDrained;
+}
+
 async function rawModePick<T>(
   label: string,
   items: PickerItem<T>[],
@@ -167,12 +224,30 @@ async function rawModePick<T>(
 
   render();
 
-  // Attach keypress parser. emitKeypressEvents is idempotent — safe to call
-  // even if a prior autocomplete/readline has already installed a decoder on
-  // this stream.
+  // (A) Drain stdin queue BEFORE attaching the picker listener.
+  // Any bytes sitting in Node's readable buffer from the prior REPL turn
+  // would otherwise flush into the keypress decoder the moment we attach.
+  const drainedBefore = drainStdin(input);
+
+  // Install the keypress decoder. `emitKeypressEvents` is idempotent — safe
+  // when `createInterface({terminal:true})` or a prior pickOne already set
+  // it up on this stream.
   readline.emitKeypressEvents(input);
   input.setRawMode?.(true);
   (input as { resume?: () => void }).resume?.();
+
+  // Second drain AFTER setRawMode(true)+resume — toggling raw mode on a
+  // pseudo-terminal can cause the kernel line-discipline to release
+  // previously-buffered bytes into the Node stream, and resume() triggers
+  // a flow-start that delivers them. Draining again catches those.
+  const drainedAfter = drainStdin(input);
+
+  if (process.env['NIMBUS_PICKER_TRACE'] === '1') {
+    process.stderr.write(`[picker-trace] drained before=${drainedBefore}B after=${drainedAfter}B\n`);
+  }
+
+  const primingMs = Number(process.env['NIMBUS_PICKER_PRIMING_MS'] ?? DEFAULT_PRIMING_WINDOW_MS);
+  const primingEndAt = Date.now() + primingMs;
 
   return new Promise<PickOneResult<T>>((resolve, reject) => {
     let settled = false;
@@ -203,11 +278,33 @@ async function rawModePick<T>(
 
     const onKeypress = (str: string | undefined, key: KeypressKey | undefined): void => {
       if (settled || busy) return;
-      // key is usually defined; str fallback for plain chars when parser
-      // didn't recognise the byte (e.g. some combining marks).
       const name = key?.name;
       const ctrl = key?.ctrl === true;
       const sequence = key?.sequence ?? str ?? '';
+
+      // (B) Priming window: swallow any keypress in the first primingMs
+      // after attach. These are either leftover bytes from a previous REPL
+      // line that bled through the autocomplete→picker handoff, or bytes
+      // flushed by setRawMode(true)/resume() after a mode-toggle. No human
+      // response can legitimately arrive this fast — typical keyboard
+      // reaction time is ~250ms — so this window is imperceptible to real
+      // users but conclusive against phantom events.
+      const now = Date.now();
+      if (now < primingEndAt) {
+        if (process.env['NIMBUS_PICKER_TRACE'] === '1') {
+          const bytes = Buffer.from(sequence, 'utf8').toString('hex');
+          const remaining = primingEndAt - now;
+          process.stderr.write(
+            `[picker-trace] SWALLOWED (priming ${remaining}ms left) name=${name ?? '(unnamed)'} ctrl=${ctrl} seq_hex=${bytes}\n`,
+          );
+        }
+        return;
+      }
+
+      if (process.env['NIMBUS_PICKER_TRACE'] === '1') {
+        const bytes = Buffer.from(sequence, 'utf8').toString('hex');
+        process.stderr.write(`[picker-trace] name=${name ?? '(unnamed)'} ctrl=${ctrl} seq_hex=${bytes} cursor=${cursor}\n`);
+      }
 
       // Ctrl-C
       if (ctrl && name === 'c') {
@@ -242,7 +339,6 @@ async function rawModePick<T>(
       }
 
       // Single printable char — shortcut / skip / custom
-      // Skip if modifier held (ctrl/meta) or name is a control key.
       if (!ctrl && !key?.meta && sequence.length === 1) {
         const ch = sequence;
         const lc = ch.toLowerCase();
@@ -254,9 +350,6 @@ async function rawModePick<T>(
         if ((lc === 'c') && allowCustom) {
           busy = true;
           unrender();
-          // Leave raw mode + drop our listener so readline's interface can
-          // cleanly read a cooked-mode line. We'll reinstate nothing — the
-          // custom branch terminates the picker either way.
           input.off('keypress', onKeypress);
           try { input.setRawMode?.(false); } catch { /* ignore */ }
           output.write('  Custom value: ');
@@ -264,8 +357,6 @@ async function rawModePick<T>(
             .then((custom) => {
               if (settled) return;
               settled = true;
-              // no raw-mode to restore; teardown's setRawMode(false) is a
-              // no-op, but still pause for symmetry.
               (input as { pause?: () => void }).pause?.();
               resolve({ custom: custom.trim() });
             })
@@ -287,8 +378,7 @@ async function rawModePick<T>(
         }
       }
 
-      // Unknown key → ignore (stray bytes from prior REPL line, UTF-8
-      // combining marks, function keys, etc. must not fire actions).
+      // Unknown key → ignore.
       void sequence;
       void fail;
     };
@@ -311,6 +401,5 @@ async function readLine(
   });
 }
 
-// Exported for tests — kept as a hook so tests can still feed synthetic
-// keystrokes through the public `pickOne`/`confirmPick` API.
-export const __testing = {};
+// Exported for tests.
+export const __testing = { drainStdin, DEFAULT_PRIMING_WINDOW_MS };

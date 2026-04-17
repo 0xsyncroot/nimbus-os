@@ -13,9 +13,17 @@
 //  3. slashAutocomplete.readLine() explicitly resumes stdin on re-entry
 //     (defense-in-depth against other pause sources).
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PassThrough } from 'node:stream';
 import { makeOnAsk, parseConfirmAnswer } from '../../../src/channels/cli/repl.ts';
+
+// v0.3.15: disable priming for synthetic keypress tests.
+const ORIGINAL_PRIMING = process.env['NIMBUS_PICKER_PRIMING_MS'];
+beforeAll(() => { process.env['NIMBUS_PICKER_PRIMING_MS'] = '0'; });
+afterAll(() => {
+  if (ORIGINAL_PRIMING === undefined) delete process.env['NIMBUS_PICKER_PRIMING_MS'];
+  else process.env['NIMBUS_PICKER_PRIMING_MS'] = ORIGINAL_PRIMING;
+});
 import {
   createAutocomplete,
   type AutocompleteInput,

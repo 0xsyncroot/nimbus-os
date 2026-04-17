@@ -1,7 +1,19 @@
 // picker.test.ts — SPEC-901 v0.2.1: tests for generic TTY picker
-import { describe, expect, test } from 'bun:test';
+import { beforeAll, afterAll, describe, expect, test } from 'bun:test';
 import { Readable, Writable } from 'node:stream';
 import { pickOne, confirmPick, type PickerItem } from '../../src/onboard/picker.ts';
+
+// v0.3.15: picker has an 80ms priming window that swallows keypresses to
+// defend against phantom bytes from a prior REPL turn. Unit tests feed
+// synthetic keys immediately — set priming to 0ms for deterministic runs.
+// Real-PTY smoke tests in tests/onboard/picker.pty.smoke.test.ts exercise
+// the priming window separately.
+const ORIGINAL_PRIMING = process.env['NIMBUS_PICKER_PRIMING_MS'];
+beforeAll(() => { process.env['NIMBUS_PICKER_PRIMING_MS'] = '0'; });
+afterAll(() => {
+  if (ORIGINAL_PRIMING === undefined) delete process.env['NIMBUS_PICKER_PRIMING_MS'];
+  else process.env['NIMBUS_PICKER_PRIMING_MS'] = ORIGINAL_PRIMING;
+});
 
 const ESC = '\u001b';
 const ARROW_UP = `${ESC}[A`;

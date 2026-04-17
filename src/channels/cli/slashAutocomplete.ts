@@ -341,6 +341,32 @@ export function createAutocomplete(opts: AutocompleteOptions): Autocomplete {
     const key = parseKey(data);
 
     if (key.type === 'paste') {
+      // v0.3.15 fix: a paste chunk may contain a trailing `\r`/`\n` when a
+      // user's terminal batches a whole line into one write (fast IME,
+      // xterm bracketed-paste off, PTY rescheduling). Split it so the
+      // Enter terminates the line correctly; otherwise the user's
+      // `\r` is silently appended to buffer and the line never submits.
+      const newlineIdx = key.text.search(/[\r\n]/);
+      if (newlineIdx >= 0) {
+        const textPart = key.text.slice(0, newlineIdx);
+        buffer += textPart;
+        // Process the rest as a synthetic Enter. We ignore any bytes
+        // AFTER the newline (they belong to a following command; queuing
+        // them would desync the REPL — typing two lines at once is rare
+        // and dropping the overflow is the conservative choice).
+        const result = buffer;
+        dropdownState = { isOpen: false, selectedName: null, scrollTop: 0 };
+        filtered = [];
+        lastRenderedLines = [];
+        safeWrite(() => {
+          output.write(`${SAVE_CURSOR}${CLEAR_BELOW}${RESTORE_CURSOR}`);
+          output.write('\n');
+        });
+        cleanup();
+        resolveReadLine(result);
+        resolveReadLine = null;
+        return;
+      }
       buffer += key.text;
       dropdownState = { isOpen: false, selectedName: null, scrollTop: 0 };
       filtered = [];
