@@ -1,7 +1,7 @@
 ---
 id: SPEC-843
 title: Streaming output render with spinner and markdown cache
-status: draft
+status: implemented
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
@@ -162,3 +162,4 @@ export function registerToolResultRenderer(toolName: string, renderer: ToolResul
 
 - 2026-04-17 @hiepht: draft created by spec-writer-streaming.
 - 2026-04-17 @hiepht: detail-pass — added ANSI/OSC strip requirement (META-009 T22); pinned MAX_STATIC_BLOCKS=500, FRAME_INTERVAL_MS=80, STALL_THRESHOLD_MS=3000, REDUCED_MOTION_CYCLE_MS=2000; hash=Bun.hash/djb2 (sha256 forbidden); ghostty/darwin/linux+win spinner frame sets; marked safe config + CVE note; cache-pollution fix (lexer on message_stop only); closed stall-threshold open question (3s)
+- 2026-04-17 developer-streaming: implemented — 7 source files + 49-test suite; all green. See commit [v0.4 SPEC-843].
