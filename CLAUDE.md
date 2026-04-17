@@ -251,6 +251,7 @@ Tracked in `/specs/CHANGELOG.md`. Key:
 - **2026-04-15** Platform abstraction from v0.1 (not retrofit).
 - **2026-04-15** Cost enforcement deferred to v0.2.
 - **2026-04-15** Plugin system v0.5 with signed allowlist.
+- **2026-04-16** User data + encryption sanctity HARD RULE added to §10 after v0.3.6 vault-key-overwrite incident. Any code path touching passphrase/vault/credential files requires reviewer-security sign-off + probe-before-write guard + upgrade-into-existing-state regression test. See §10 Forbidden areas subsection for the 7 rules.
 
 ## 9. Open Questions (need user decision)
 
@@ -291,6 +292,34 @@ Tracked in `/specs/CHANGELOG.md`. Key:
 - `src/safety/` — trust boundary + audit
 - `src/platform/secrets/` — credential storage
 - Default templates for SOUL.md/IDENTITY.md (shape agent identity)
+
+### HARD RULE — user data + encryption sanctity (enforced since v0.3.6 incident)
+
+**v0.3.6 shipped code that silently overwrote `~/.nimbus/.vault-key` with a
+random passphrase when the env var `NIMBUS_VAULT_PASSPHRASE` was absent. Users
+who had saved an API key under the original env passphrase were permanently
+locked out after upgrading. Root cause: `autoProvisionPassphrase()` (existing
+since v0.2.1) had a fallthrough that wrote a fresh random passphrase on any
+code path that hit it without a vault envelope probe. v0.3.6 added 7 new call
+sites that reached this fallthrough during normal REPL boot in a new shell.**
+
+**Rules to prevent recurrence**:
+
+1. **NEVER touch user secrets/vault/credential files (`.vault-key`, `secrets.enc`, `*.pem`, OS keychain entries) on any code path that can fire without explicit user action.** Reading is OK; writing/deriving/rotating is NOT without a user-initiated command like `nimbus init`, `nimbus key set`, or `nimbus vault reset`.
+
+2. **Before writing any passphrase/key/encrypted file, probe whether an existing artifact would be invalidated.** If a `secrets.enc` exists and the candidate passphrase cannot decrypt it → refuse the write, raise `X_CRED_ACCESS / vault_locked` with a recovery hint. v0.3.7 `canDecryptVault` is the reference pattern — reuse it, do not re-introduce a generate-on-missing fallthrough elsewhere.
+
+3. **Schema changes require migration, not destruction.** If `workspace.json`, `SOUL.md`, `MEMORY.md`, `secrets.enc`, or session JSONL layout changes across a release: write a migration at `src/storage/migrations/` AND backup the old file to `*.migrated-{ts}` before rewriting. If a file cannot be auto-migrated, prompt the user with an explicit recovery flow — NEVER clobber.
+
+4. **Any new `autoProvisionPassphrase()` / `keyring.set()` / `writeFile(vaultKey)` call site is a security-sensitive change.** It requires reviewer-security sign-off + a regression test that simulates the "upgrade into existing-vault, env-unset" scenario.
+
+5. **Sensitive-data plumbing (API keys, bot tokens, OAuth secrets, passphrases) is DESIGN-BEFORE-CODE.** Spawn `reviewer-security` on the design doc first; implement only after approval. Review `SPEC-152` (secrets vault), `META-009` (threat model) for the existing contract.
+
+6. **Never log key/passphrase plaintext.** Pino context, NimbusError context, stdout — all must redact. Mask like `"sk-****abcd"`. Pino must route to `~/.nimbus/logs/nimbus.log` by default (v0.3.8 fix), never stdout where the user sees it.
+
+7. **"Upgrade never destroys user data"** — if a release cannot preserve user state across a binary swap, it is a bug-blocker, not a feature-ship. Gate B QA MUST include "existing-state + binary swap" scenario before tagging (added as regression after v0.3.6).
+
+Violations of these rules are treated as P0 — same priority as active data-loss bugs. When in doubt about a change touching `src/platform/secrets/`, `src/providers/registry.ts`, `src/onboard/`, or any file matching `*key*`, `*vault*`, `*credential*`, `*secret*`: STOP, write a design doc, request reviewer-security, do not code.
 
 ## 11. Tech Stack Quick Reference
 
