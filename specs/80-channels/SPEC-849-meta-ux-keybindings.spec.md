@@ -161,6 +161,7 @@ export function createKeybindingManager(): KeybindingManager
 
 - [ ] Kitty keyboard opt-in: auto-detect capability probe or `NIMBUS_KITTY_KEYS=1` env only? (defer decision to v0.4.1)
 - [ ] Should `~/.nimbus/keybindings.json` schema be versioned for forward-compat migration?
+- [ ] macOS stdout.write mock pattern — 12 AltScreen + userOverrides tests skipped on darwin pending migration to Writable.pipe approach. Track as v0.4.0.2.
 
 ## 10. Changelog
 
