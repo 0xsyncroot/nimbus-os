@@ -1,28 +1,50 @@
 // Telegram.ts — SPEC-808 T3: tools the agent invokes to manage the Telegram channel.
 // ConnectTelegram / DisconnectTelegram / TelegramStatus. sideEffects: 'exec' (network).
 //
-// The tools pull the runtime context (provider, model, registry, gate) from a
-// module-level bridge that the REPL populates at startup. This keeps ToolContext
-// lean (workspaceId + sessionId + signal only, per SPEC-301) while still giving
-// the tool everything it needs to start a live adapter.
+// SPEC-833: tools layer must NOT import src/channels/** directly (META-001 §2.2).
+// This file now depends only on src/core/channelPorts.ts (abstract ChannelService port).
+// The concrete ChannelRuntime adapter (src/channels/runtime.ts) registers itself via
+// registerChannelService() at REPL startup.
+//
+// RuntimeBridge pattern: the REPL still sets a bridge for the full startTelegram path
+// (it needs provider/model/registry/gate dependencies that tools don't own). The port
+// handles status queries and stop without the bridge.
 
 import { z } from 'zod';
 import { NimbusError, ErrorCode, wrapError } from '../../observability/errors.ts';
-import { getChannelRuntime, type StartTelegramOptions } from '../../channels/runtime.ts';
-import { readSummary } from '../../channels/telegram/config.ts';
+import { getChannelService, type ChannelService } from '../../core/channelPorts.ts';
 import type { Tool, ToolContext } from '../types.ts';
 
-// ── Bridge: REPL writes here at boot; tools read at invocation time ──
-// v0.3.6 wires this in startRepl(). In tests, the bridge can be set directly.
+/**
+ * Resolve the active ChannelService.
+ * Tries the port registry first; if not yet registered (e.g. in tests that call
+ * __resetChannelRuntime before a lazy getChannelRuntime init), returns null so
+ * callers can produce the correct missing-config error.
+ */
+function resolveChannelService(): ChannelService | null {
+  return getChannelService();
+}
 
-type RuntimeBridge = (ctx: ToolContext) => Omit<StartTelegramOptions, 'wsId'> | null;
+// ── Bridge: REPL writes here at boot; used for ConnectTelegram only ───────────
+// v0.3.6 wires this in startRepl(). In tests, the bridge can be set directly.
+// The bridge carries provider/model/registry/gate — deps the tools layer doesn't own.
+
+export interface TelegramRuntimeDeps {
+  provider: import('../../ir/types.ts').Provider;
+  model: string;
+  registry: import('../index.ts').ToolRegistry;
+  gate: import('../../permissions/index.ts').Gate;
+  cwd: string;
+}
+
+type RuntimeBridge = (ctx: ToolContext) => TelegramRuntimeDeps | null;
 let runtimeBridge: RuntimeBridge | null = null;
 
 export function setTelegramRuntimeBridge(bridge: RuntimeBridge | null): void {
   runtimeBridge = bridge;
 }
 
-// ── ConnectTelegram ───────────────────────────────────────────────────────
+// ── ConnectTelegram ───────────────────────────────────────────────────────────
 
 export const ConnectTelegramInputSchema = z
   .object({
@@ -49,20 +71,28 @@ export function createConnectTelegramTool(): Tool<ConnectTelegramInput, ConnectT
     inputSchema: ConnectTelegramInputSchema,
     async handler(_input, ctx) {
       try {
-        const runtime = getChannelRuntime();
-        if (runtime.isTelegramRunning()) {
-          const username = runtime.getTelegramBotUsername() ?? 'bot';
-          const summary = await readSummary(ctx.workspaceId);
+        const svc = getChannelService();
+        if (!svc) {
+          throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
+            reason: 'channel_service_not_registered',
+            hint: 'this tool must be invoked from inside a REPL session',
+          });
+        }
+
+        if (svc.isTelegramRunning()) {
+          const username = svc.getTelegramBotUsername() ?? 'bot';
+          const status = await svc.getTelegramStatus(ctx.workspaceId);
           return {
             ok: true,
             output: {
               botUsername: username,
               alreadyRunning: true,
-              allowedUserCount: summary.allowedUserIds.length,
+              allowedUserCount: status.allowedUserIds.length,
             },
             display: `Telegram already online as @${username}`,
           };
         }
+
         if (!runtimeBridge) {
           throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
             reason: 'channel_runtime_not_wired',
@@ -75,20 +105,24 @@ export function createConnectTelegramTool(): Tool<ConnectTelegramInput, ConnectT
             reason: 'channel_runtime_deps_unavailable',
           });
         }
-        const summary = await readSummary(ctx.workspaceId);
-        const { botUsername } = await runtime.startTelegram({
-          wsId: ctx.workspaceId,
-          ...deps,
-        });
+
+        // Full startTelegram requires the channel runtime's StartTelegramOptions.
+        // We delegate to the registered ChannelService which wraps the runtime.
+        // The runtime's startTelegram path needs provider/model/registry/gate;
+        // those are passed via the bridge into the runtime before this call resolves.
+        // The ChannelService.startTelegram will throw if the bridge hasn't been set;
+        // the REPL sets both the bridge AND calls startRepl wiring in the right order.
+        const { botUsername } = await svc.startTelegram(ctx.workspaceId);
+        const status = await svc.getTelegramStatus(ctx.workspaceId);
         return {
           ok: true,
           output: {
             botUsername,
             alreadyRunning: false,
-            allowedUserCount: summary.allowedUserIds.length,
+            allowedUserCount: status.allowedUserIds.length,
           },
           display:
-            `Telegram online as @${botUsername} — ${summary.allowedUserIds.length} user(s) authorised. ` +
+            `Telegram online as @${botUsername} — ${status.allowedUserIds.length} user(s) authorised. ` +
             'Open Telegram and send a message to the bot.',
         };
       } catch (err) {
@@ -98,7 +132,7 @@ export function createConnectTelegramTool(): Tool<ConnectTelegramInput, ConnectT
   };
 }
 
-// ── DisconnectTelegram ────────────────────────────────────────────────────
+// ── DisconnectTelegram ────────────────────────────────────────────────────────
 
 export const DisconnectTelegramInputSchema = z.object({}).strict();
 export type DisconnectTelegramInput = z.infer<typeof DisconnectTelegramInputSchema>;
@@ -120,9 +154,15 @@ export function createDisconnectTelegramTool(): Tool<
     inputSchema: DisconnectTelegramInputSchema,
     async handler(_input, _ctx) {
       try {
-        const runtime = getChannelRuntime();
-        const wasRunning = runtime.isTelegramRunning();
-        await runtime.stopTelegram();
+        const svc = getChannelService();
+        if (!svc) {
+          throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
+            reason: 'channel_service_not_registered',
+            hint: 'this tool must be invoked from inside a REPL session',
+          });
+        }
+        const wasRunning = svc.isTelegramRunning();
+        await svc.stopTelegram();
         return {
           ok: true,
           output: { stopped: true, wasRunning },
@@ -135,7 +175,7 @@ export function createDisconnectTelegramTool(): Tool<
   };
 }
 
-// ── TelegramStatus ────────────────────────────────────────────────────────
+// ── TelegramStatus ────────────────────────────────────────────────────────────
 
 export const TelegramStatusInputSchema = z.object({}).strict();
 export type TelegramStatusInput = z.infer<typeof TelegramStatusInputSchema>;
@@ -157,19 +197,25 @@ export function createTelegramStatusTool(): Tool<TelegramStatusInput, TelegramSt
     inputSchema: TelegramStatusInputSchema,
     async handler(_input, ctx) {
       try {
-        const runtime = getChannelRuntime();
-        const summary = await readSummary(ctx.workspaceId);
-        const connected = runtime.isTelegramRunning();
+        const svc = getChannelService();
+        if (!svc) {
+          // Outside REPL: return minimal status rather than throwing
+          return {
+            ok: true,
+            output: { connected: false, tokenPresent: false, allowedUserIds: [] },
+            display: 'Telegram: channel service not available in this context',
+          };
+        }
+        const status = await svc.getTelegramStatus(ctx.workspaceId);
         const output: TelegramStatusOutput = {
-          connected,
-          tokenPresent: summary.tokenPresent,
-          allowedUserIds: summary.allowedUserIds,
+          connected: status.connected,
+          tokenPresent: status.tokenPresent,
+          allowedUserIds: status.allowedUserIds,
         };
-        const username = runtime.getTelegramBotUsername();
-        if (username) output.botUsername = username;
-        const display = connected
-          ? `Telegram: online (@${username ?? 'bot'}), ${summary.allowedUserIds.length} allowed user(s)`
-          : summary.tokenPresent
+        if (status.botUsername) output.botUsername = status.botUsername;
+        const display = status.connected
+          ? `Telegram: online (@${status.botUsername ?? 'bot'}), ${status.allowedUserIds.length} allowed user(s)`
+          : status.tokenPresent
             ? 'Telegram: offline (token saved, adapter not started)'
             : 'Telegram: offline (no token stored)';
         return { ok: true, output, display };

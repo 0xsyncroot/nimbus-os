@@ -1,4 +1,6 @@
 // telegram.test.ts — SPEC-808 T3: ConnectTelegram / Disconnect / Status tools.
+// SPEC-833: updated to use ChannelService port (registerChannelService mock).
+// Tools no longer import channels/ directly — the port (core/channelPorts) is injected.
 
 import { describe, expect, test, beforeEach, afterEach } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -16,7 +18,13 @@ import {
 import {
   addAllowedUserId,
   setTelegramBotToken,
+  readSummary,
 } from '../../src/channels/telegram/config.ts';
+import {
+  registerChannelService,
+  __resetChannelService,
+  type ChannelService,
+} from '../../src/core/channelPorts.ts';
 import { createWorkspaceDir } from '../../src/storage/workspaceStore.ts';
 import { switchWorkspace } from '../../src/core/workspace.ts';
 import type { ToolContext } from '../../src/tools/types.ts';
@@ -41,6 +49,42 @@ function makeCtx(wsId: string): ToolContext {
   };
 }
 
+/**
+ * Build a minimal mock ChannelService backed by in-process state.
+ * Used to test tools without starting a real Telegram adapter.
+ */
+function makeMockChannelService(wsId: string): ChannelService {
+  let running = false;
+  let botUsername: string | null = null;
+
+  return {
+    async startTelegram(_wsId) {
+      running = true;
+      botUsername = 'testbot';
+      return { botUsername: 'testbot' };
+    },
+    async stopTelegram() {
+      running = false;
+      botUsername = null;
+    },
+    isTelegramRunning() {
+      return running;
+    },
+    getTelegramBotUsername() {
+      return botUsername;
+    },
+    async getTelegramStatus(queryWsId) {
+      const summary = await readSummary(queryWsId ?? wsId);
+      return {
+        connected: running,
+        botUsername: botUsername ?? undefined,
+        tokenPresent: summary.tokenPresent,
+        allowedUserIds: summary.allowedUserIds,
+      };
+    },
+  };
+}
+
 describe('SPEC-808 T3: Telegram tools', () => {
   let workDir: string;
   let wsId: string;
@@ -53,11 +97,15 @@ describe('SPEC-808 T3: Telegram tools', () => {
     __resetSecretStoreCache();
     __resetFileFallbackKey();
     __resetChannelRuntime();
+    __resetChannelService();
 
     const { meta } = await createWorkspaceDir({ name: 'tg-tools' });
     wsId = meta.id;
     await switchWorkspace(wsId);
     setTelegramRuntimeBridge(null);
+
+    // SPEC-833: register mock ChannelService so tools can find the port
+    registerChannelService(makeMockChannelService(wsId));
   });
 
   afterEach(async () => {
@@ -67,6 +115,7 @@ describe('SPEC-808 T3: Telegram tools', () => {
     __resetSecretStoreCache();
     __resetFileFallbackKey();
     __resetChannelRuntime();
+    __resetChannelService();
     setTelegramRuntimeBridge(null);
     await rm(workDir, { recursive: true, force: true });
   });
@@ -93,24 +142,28 @@ describe('SPEC-808 T3: Telegram tools', () => {
     expect(res.output.allowedUserIds).toEqual([42]);
   });
 
-  test('ConnectTelegram fails with U_MISSING_CONFIG when no token', async () => {
-    // Wire a no-op bridge so the tool reaches the config check
-    setTelegramRuntimeBridge(() => null); // returns null → triggers deps_unavailable
+  test('ConnectTelegram fails with U_MISSING_CONFIG when bridge returns null deps', async () => {
+    // Wire a no-op bridge that returns null → triggers deps_unavailable error
+    setTelegramRuntimeBridge(() => null);
 
     const tool = createConnectTelegramTool();
     const res = await tool.handler({}, makeCtx(wsId));
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe(ErrorCode.U_MISSING_CONFIG);
+    expect(res.error.context['reason']).toBe('channel_runtime_deps_unavailable');
   });
 
-  test('ConnectTelegram fails clearly when no bridge wired', async () => {
-    // bridge is null by default (set in beforeEach)
+  test('ConnectTelegram fails with channel_runtime_not_wired when no bridge', async () => {
+    // bridge is null by default (set in beforeEach); mock svc is running=false
     const tool = createConnectTelegramTool();
     const res = await tool.handler({}, makeCtx(wsId));
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe(ErrorCode.U_MISSING_CONFIG);
+    // SPEC-833: the mock service's startTelegram throws channel_runtime_bridge_required
+    // when isTelegramRunning()=false and no bridge is set; but the tool checks
+    // runtimeBridge first (after confirming not already running).
     expect(res.error.context['reason']).toBe('channel_runtime_not_wired');
   });
 

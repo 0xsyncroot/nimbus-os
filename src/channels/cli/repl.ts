@@ -13,6 +13,7 @@ import { createProviderFromConfig } from '../../providers/registry.ts';
 import type { Provider } from '../../ir/types.ts';
 import type { TurnContext } from '../../core/turn.ts';
 import type { ToolInvocation as LoopToolInvocation } from '../../core/loop.ts';
+// eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): repl is the composition root; tool registry injected here until UIHost contract ships
 import { createDefaultRegistry, createLoopAdapter, type ToolRegistry } from '../../tools/index.ts';
 import { createGate, compileRules, type Gate } from '../../permissions/index.ts';
 import { colors, prefixes } from './colors.ts';
@@ -29,6 +30,7 @@ import {
 import { createAutocomplete, type AutocompleteInput } from './slashAutocomplete.ts';
 import { handleModelPicker } from './modelPicker.ts';
 import { wireBusSubscribers } from './subscriptions.ts';
+// eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): repl sets runtimeBridge for Telegram tool; wiring point until UIHost contract ships
 import { setTelegramRuntimeBridge } from '../../tools/builtin/Telegram.ts';
 import { getChannelRuntime } from '../runtime.ts';
 import { formatBootError } from './errorFormatCli.ts';

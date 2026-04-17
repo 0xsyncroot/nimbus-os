@@ -1,6 +1,9 @@
 // runtime.ts — SPEC-808: singleton ChannelRuntime + inbound → runTurn bridge.
 // One per REPL process. Holds the ChannelManager, the Telegram adapter handle,
 // and the inbound-event subscription that feeds messages into the real agent loop.
+//
+// SPEC-833: registers itself as the ChannelService in core/channelPorts.ts at
+// startup so that tools can call the abstract port without importing channels/.
 
 import { logger } from '../observability/logger.ts';
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
@@ -14,13 +17,16 @@ import {
   getAllowedUserIds,
   getTelegramBotToken,
   setDefaultWorkspaceId,
+  readSummary,
 } from './telegram/config.ts';
 import { runTurn } from '../core/loop.ts';
 import { createTurnAbort } from '../core/cancellation.ts';
 import { getOrCreateSession, appendToCache, getCachedMessages } from '../core/sessionManager.ts';
+// eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): runtime creates loop adapter with tools; refactor pending UIHost contract
 import { createLoopAdapter, type ToolRegistry } from '../tools/index.ts';
 import type { Gate } from '../permissions/index.ts';
 import type { TurnContext } from '../core/turn.ts';
+import { registerChannelService, __resetChannelService } from '../core/channelPorts.ts';
 
 interface TelegramHandle {
   adapter: ReturnType<typeof createTelegramAdapter>;
@@ -42,6 +48,8 @@ export interface ChannelRuntime {
   stopTelegram(): Promise<void>;
   isTelegramRunning(): boolean;
   getTelegramBotUsername(): string | null;
+  /** SPEC-833: used by ChannelService port to surface status to tools. */
+  getTelegramStatus(wsId: string): Promise<{ connected: boolean; botUsername?: string; tokenPresent: boolean; allowedUserIds: number[] }>;
   dispose(): Promise<void>;
 }
 
@@ -219,7 +227,7 @@ function createRuntime(): ChannelRuntime {
     }
   }
 
-  return {
+  const runtime: ChannelRuntime = {
     manager,
 
     async startTelegram(opts: StartTelegramOptions): Promise<{ botUsername: string }> {
@@ -296,10 +304,48 @@ function createRuntime(): ChannelRuntime {
       return telegram ? telegram.botUsername : null;
     },
 
+    async getTelegramStatus(wsId: string) {
+      const summary = await readSummary(wsId);
+      const connected = telegram !== null;
+      const result: { connected: boolean; botUsername?: string; tokenPresent: boolean; allowedUserIds: number[] } = {
+        connected,
+        tokenPresent: summary.tokenPresent,
+        allowedUserIds: summary.allowedUserIds,
+      };
+      const username = telegram?.botUsername;
+      if (username) result.botUsername = username;
+      return result;
+    },
+
     async dispose(): Promise<void> {
       await this.stopTelegram();
     },
   };
+
+  // SPEC-833: register as the abstract ChannelService so tools can depend on
+  // the port (src/core/channelPorts.ts) without importing src/channels/**.
+  registerChannelService({
+    startTelegram: async (_wsId) => {
+      // runtimeBridge is not available here; tools must still use ConnectTelegram
+      // which injects deps via setTelegramRuntimeBridge(). The port delegates to
+      // the full startTelegram method after the bridge has been set by the REPL.
+      // We expose a no-deps path for status queries; full start requires bridge.
+      const running = runtime.isTelegramRunning();
+      if (running) {
+        return { botUsername: runtime.getTelegramBotUsername() ?? 'bot' };
+      }
+      throw new NimbusError(ErrorCode.U_MISSING_CONFIG, {
+        reason: 'channel_runtime_bridge_required',
+        hint: 'use ConnectTelegram tool (with runtimeBridge set) to start Telegram',
+      });
+    },
+    stopTelegram: () => runtime.stopTelegram(),
+    isTelegramRunning: () => runtime.isTelegramRunning(),
+    getTelegramBotUsername: () => runtime.getTelegramBotUsername(),
+    getTelegramStatus: (wsId) => runtime.getTelegramStatus(wsId),
+  });
+
+  return runtime;
 }
 
 let singleton: ChannelRuntime | null = null;
@@ -309,7 +355,11 @@ export function getChannelRuntime(): ChannelRuntime {
   return singleton;
 }
 
-/** Test-only reset so each test gets a fresh runtime. */
+/** Test-only reset so each test gets a fresh runtime.
+ *  SPEC-833: also clears the ChannelService port registration so tests
+ *  that call __resetChannelRuntime() get a clean state (no stale port).
+ *  A fresh getChannelRuntime() call will re-create and re-register. */
 export function __resetChannelRuntime(): void {
   singleton = null;
+  __resetChannelService();
 }

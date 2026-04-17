@@ -1,9 +1,15 @@
 // todoWriteTool.ts — SPEC-132: TodoWriteTool — full-list replacement plan management.
+//
+// SPEC-833: tools layer must NOT import src/channels/** (META-001 §2.2).
+// Removed renderTodoList() import — tool returns structured plain-text summary.
+// Each channel formats the TodoSnapshot in its native form:
+//   CLI: src/channels/render/todoList.ts (ANSI) — called by render.ts when it
+//        intercepts the tool_result display text or the tool_end event.
+//   Telegram/HTTP: future — render plain text or Markdown from the snapshot.
 
 import { z } from 'zod';
 import { ErrorCode, NimbusError } from '../observability/errors.ts';
 import { TodoItemSchema, TodoSnapshotSchema, todoStore, validateSnapshot } from '../core/todoStore.ts';
-import { renderTodoList } from '../channels/render/todoList.ts';
 import type { Tool, ToolContext, ToolResult } from './types.ts';
 
 // ── Input schema ─────────────────────────────────────────────────────────────
@@ -37,10 +43,12 @@ async function handler(
 
   await todoStore.append(ctx.workspaceId, ctx.sessionId, snapshot);
 
-  const display = renderTodoList(snapshot);
+  // display = plain-text summary returned to the model in the tool_result block.
+  // ANSI rendering happens at the channel layer (src/channels/render/todoList.ts),
+  // NOT here — keeping tools pure per META-001 §2.2.
   const summary = buildSummary(snapshot);
 
-  return { ok: true, output: summary, display };
+  return { ok: true, output: summary, display: summary };
 }
 
 function buildSummary(snapshot: ReturnType<typeof TodoSnapshotSchema.parse>): string {
