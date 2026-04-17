@@ -86,11 +86,11 @@ files_touched:
 | 3 | `title` present, ≤80 chars | `SPEC_VALIDATION: title length` |
 | 4 | `status` ∈ {draft, approved, in-progress, implemented, deprecated} | `SPEC_VALIDATION: status value` |
 | 5 | `release` ∈ {v0.1 … v0.5} — REQUIRED for `SPEC-*`, OPTIONAL for `META-*`/`MOD-*` | `SPEC_VALIDATION: release value` / `SPEC_VALIDATION: release required for SPEC-*` |
-| 6 | All 6 mandatory body sections present: Outcomes, Scope, Constraints, Prior Decisions, Task Breakdown, Verification | `SPEC_VALIDATION: missing section <name>` |
+| 6 | All 6 mandatory body sections present: Outcomes, Scope, Constraints, Prior Decisions, Task Breakdown, Verification. **Drafts** (status=`draft`) only require Outcomes — remaining sections are enforced at `approved`/`in-progress`/`implemented`. | `SPEC_VALIDATION: missing section <name>` |
 | 7 | `depends_on` refs all resolve to existing files AND the transitive-closure does NOT contain `id` (no self-cycle) | `SPEC_VALIDATION: unresolved dep SPEC-999` / `SPEC_VALIDATION: dependency cycle via <path>` |
 | 8 | `files_touched` paths start with `src/`, `tests/`, or `bench/`; `.md` allowed under `src/onboard/templates/` | `SPEC_VALIDATION: bad path` |
 | 9 | Body word count (excluding code blocks): >800 emits **warn** (exit 0), >1500 emits **hard fail** (exit 1). Thresholds configurable via `~/.nimbus/spec.config.json` | `SPEC_VALIDATION: body length warn/fail` |
-| 10 | Changelog section has ≥1 entry dated YYYY-MM-DD | `SPEC_VALIDATION: changelog missing entry` |
+| 10 | Changelog section has ≥1 entry dated YYYY-MM-DD (drafts exempt — no history yet) | `SPEC_VALIDATION: changelog missing entry` |
 
 **Error-channel duality**: validator returns typed `ValidationError[]` for display (string format `SPEC_VALIDATION: ...`) AND programmatic callers throw `NimbusError(ErrorCode.S_CONFIG_INVALID, {rule, path, ...})` per META-003. Keep display string stable; use NimbusError for non-interactive callers (editor plugins, CI).
 
@@ -186,3 +186,4 @@ export interface SpecTools {
 - 2026-04-15 @hiepht: draft initial
 - 2026-04-15 @hiepht: revise per reviewer — id regex supports `SPEC|META|MOD` prefixes; `release` field optional at schema level with refine() requiring it only for `SPEC-*`
 - 2026-04-15 @hiepht: revise per reviewer (round 2) — rule 9 split into warn/fail thresholds; rule 8 allows `bench/` + `.md` under `src/onboard/templates/`; rule 7 adds transitive cycle detection; document NimbusError dual-channel
+- 2026-04-17 @hiepht: v0.3.18 CI unblock — rule 6 and rule 10 are now lenient for `status: draft` (drafts only require Outcomes; changelog exempt). Matches SDD semantics where drafts are seed sketches before approval. Non-draft statuses still enforce all 6 sections + dated changelog.

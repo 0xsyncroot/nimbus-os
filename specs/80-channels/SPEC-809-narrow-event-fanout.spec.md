@@ -1,5 +1,5 @@
 ---
-id: SPEC-806r
+id: SPEC-809
 title: Narrow event fanout — notify-me when CLI closed
 status: draft
 version: 0.1.0

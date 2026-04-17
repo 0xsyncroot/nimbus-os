@@ -20,11 +20,18 @@ const REQUIRED_SECTIONS_FEATURE = [
   'verification',
 ];
 
+// Drafts are seed sketches (SDD step 2 in CLAUDE.md §4) — only the outcome is
+// mandatory until the spec is promoted to `approved`/`in-progress`/`implemented`.
+// Other rules (id, release, deps, paths, changelog, length) still apply.
+const REQUIRED_SECTIONS_FEATURE_DRAFT = ['outcomes'];
+
 const REQUIRED_SECTIONS_META = [
   'purpose',
   'consumers',
   'evolution policy',
 ];
+
+const REQUIRED_SECTIONS_META_DRAFT = ['purpose'];
 
 const VALID_FILE_PREFIXES = ['src/', 'tests/', 'bench/', 'scripts/', 'examples/'];
 const VALID_MD_PREFIX = 'src/onboard/templates/';
@@ -99,8 +106,16 @@ export function validateSpec(spec: ParsedSpec, all: ParsedSpec[] = [spec]): Vali
     });
   }
 
-  // Rule 6: required body sections (different for META vs SPEC)
-  const requiredSections = fm.id.startsWith('META-') ? REQUIRED_SECTIONS_META : REQUIRED_SECTIONS_FEATURE;
+  // Rule 6: required body sections (different for META vs SPEC; drafts only need the seed outcome)
+  const isMeta = fm.id.startsWith('META-');
+  const isDraft = fm.status === 'draft';
+  const requiredSections = isMeta
+    ? isDraft
+      ? REQUIRED_SECTIONS_META_DRAFT
+      : REQUIRED_SECTIONS_META
+    : isDraft
+      ? REQUIRED_SECTIONS_FEATURE_DRAFT
+      : REQUIRED_SECTIONS_FEATURE;
   for (const sec of requiredSections) {
     if (!hasSection(spec, sec)) {
       errors.push({
@@ -164,8 +179,8 @@ export function validateSpec(spec: ParsedSpec, all: ParsedSpec[] = [spec]): Vali
   }
   // Note: warn threshold (>800) returned separately via getWarnings()
 
-  // Rule 10: changelog has ≥1 entry dated YYYY-MM-DD
-  if (!hasDatedChangelogEntry(spec)) {
+  // Rule 10: changelog has ≥1 entry dated YYYY-MM-DD (drafts exempt — no history to record yet)
+  if (!isDraft && !hasDatedChangelogEntry(spec)) {
     errors.push({
       rule: 10,
       code: `SPEC_VALIDATION: changelog missing entry`,

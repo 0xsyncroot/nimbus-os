@@ -46,7 +46,7 @@ files_touched:
 - Ink / Yoga adoption → v1.0+ re-evaluation per Expert 4 (requires META-011 RFC)
 - Mouse / Kitty / paste modes → same deferral (v1.0 Ink gate)
 - Multi-line editor intent → v0.4
-- `UIIntent.progress` for tool-call streaming → v0.4 with SPEC-806r fanout
+- `UIIntent.progress` for tool-call streaming → v0.4 with SPEC-809 fanout
 
 ## 3. Constraints
 

@@ -132,7 +132,7 @@ export interface UIHost {
 ## 9. Open Questions
 
 - [ ] Should `UIIntent.pick` support multi-select in v0.3? (defer — current picker is single-select)
-- [ ] Do we need `progress` intent for long-running tool calls? (defer to v0.4 with SPEC-806r event fanout)
+- [ ] Do we need `progress` intent for long-running tool calls? (defer to v0.4 with SPEC-809 event fanout)
 
 ## 10. Changelog
 
