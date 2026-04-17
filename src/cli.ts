@@ -135,7 +135,7 @@ async function main(): Promise<number> {
   switch (cmd) {
     case '--version':
     case '-v':
-      process.stdout.write('nimbus-os 0.3.8-alpha\n');
+      process.stdout.write('nimbus-os 0.3.9-alpha\n');
       return 0;
     case '--help':
     case '-h':
@@ -159,6 +159,21 @@ async function main(): Promise<number> {
       if (Object.keys(answers).length > 0) {
         opts.answers = answers as NonNullable<Parameters<typeof runInit>[0]>['answers'];
       }
+      // SPEC-904 v0.3.9 Gate B fix: in --no-prompt mode with piped stdin,
+      // read the key from stdin so scripted init can store a key. Without
+      // this, `echo sk-... | nimbus init --no-prompt` silently skipped
+      // the key step and left the user without a working provider.
+      if (flags.noPrompt && !process.stdin.isTTY && !flags.skipKey) {
+        const { readKeyFromStdin } = await import('./onboard/keyPrompt.ts');
+        try {
+          const piped = await readKeyFromStdin(process.stdin as NodeJS.ReadStream);
+          if (piped && piped.length > 0) {
+            opts.apiKey = piped;
+          }
+        } catch {
+          // empty stdin — leave opts.apiKey unset; runKeyStep will skip gracefully
+        }
+      }
       await runInit(opts);
       if (flags.noChat || flags.noPrompt) return 0; // CI / scripted path — skip auto-REPL
       // Auto-continue into interactive REPL so the user doesn't have to re-run `nimbus`.
@@ -171,44 +186,41 @@ async function main(): Promise<number> {
       return runCost(args.slice(1));
     }
     case 'key': {
+      const sub = args[1];
+      // No subcommand or `change` → interactive menu (SPEC-904)
+      if (!sub || sub === 'change') {
+        const { runInteractiveKeyManager } = await import('./key/interactive.ts');
+        const { getActiveWorkspace } = await import('./core/workspace.ts');
+        return runInteractiveKeyManager({
+          workspaceId: (await getActiveWorkspace())?.id ?? '',
+          input: process.stdin as NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (r: boolean) => unknown },
+          output: process.stdout,
+          isTTY: !!process.stdin.isTTY,
+        });
+      }
+      // Existing subcmd path: set / list / delete / test
       const { runKeyCli } = await import('./key/index.ts');
       return runKeyCli({ argv: args.slice(1) });
     }
     case 'doctor': {
-      const { runDoctor } = await import('./cli/commands/doctor.ts');
+      // Deprecated alias — use `nimbus debug doctor` (removed in v0.5)
+      process.stderr.write(
+        'note: `nimbus doctor` is deprecated; use `nimbus debug doctor` or `nimbus check`. Will be removed in v0.5.\n',
+      );
+      const { runDoctor } = await import('./cli/debug/doctor.ts');
       return runDoctor();
     }
-    case 'vault': {
-      const { runVault } = await import('./cli/commands/vault.ts');
-      return runVault(args.slice(1));
+    case 'debug': {
+      const { runDebug } = await import('./cli/debug/index.ts');
+      return runDebug(args.slice(1));
+    }
+    case 'check': {
+      const { runCheck } = await import('./cli/commands/check.ts');
+      return runCheck(args.slice(1));
     }
     case 'backup': {
       const { runBackup } = await import('./cli/commands/backup.ts');
       return runBackup(args.slice(1));
-    }
-    case 'status': {
-      const { runStatus } = await import('./cli/commands/status.ts');
-      return runStatus(args.slice(1));
-    }
-    case 'health': {
-      const { runHealth } = await import('./cli/commands/health.ts');
-      return runHealth(args.slice(1));
-    }
-    case 'metrics': {
-      const { runMetrics } = await import('./cli/commands/metrics.ts');
-      return runMetrics(args.slice(1));
-    }
-    case 'errors': {
-      const { runErrors } = await import('./cli/commands/errors.ts');
-      return runErrors(args.slice(1));
-    }
-    case 'trace': {
-      const { runTrace } = await import('./cli/commands/trace.ts');
-      return runTrace(args.slice(1));
-    }
-    case 'audit': {
-      const { runAudit } = await import('./cli/commands/audit.ts');
-      return runAudit(args.slice(1));
     }
     case 'skill': {
       const { runSkillCli } = await import('./skills/registry/skillCli.ts');
@@ -223,7 +235,7 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_UPGRADE_DETECT']) {
         const { readInstalledVersion, writeInstalledVersion, printUpgradeNote } =
           await import('./onboard/upgradeDetector.ts');
-        const current = '0.3.8-alpha';
+        const current = '0.3.9-alpha';
         const installed = await readInstalledVersion();
         if (installed && installed !== current) {
           process.stdout.write(`nimbus ${installed} → ${current} (upgraded)\n`);
@@ -236,9 +248,13 @@ async function main(): Promise<number> {
       if (!process.env['NIMBUS_SKIP_DIAGNOSE']) {
         const { diagnoseVault } = await import('./platform/secrets/diagnose.ts');
         const vaultStatus = await diagnoseVault();
-        if (!vaultStatus.ok && vaultStatus.reason !== 'missing_file') {
+        if (!vaultStatus.ok) {
           const { runRecoveryPrompt } = await import('./onboard/recoveryPrompt.ts');
-          const handled = await runRecoveryPrompt(vaultStatus, { tty: process.stdin.isTTY });
+          const { nimbusHome } = await import('./platform/paths.ts');
+          const handled = await runRecoveryPrompt(
+            { reason: vaultStatus.reason, path: nimbusHome() },
+            { tty: Boolean(process.stdin.isTTY) },
+          );
           if (!handled) return 2;
         }
       }
@@ -254,49 +270,34 @@ async function main(): Promise<number> {
       await startRepl({ skipPermissions: flags.skipPermissions });
       return 0;
     }
-    default:
-      process.stderr.write(`Unknown command: ${cmd}\n`);
-      printHelp();
+    default: {
+      const DEBUG_VERBS = new Set(['status', 'health', 'metrics', 'errors', 'trace', 'audit', 'vault']);
+      if (cmd && DEBUG_VERBS.has(cmd)) {
+        process.stderr.write(`Unknown command: ${cmd}. Did you mean \`nimbus debug ${cmd}\`?\n`);
+      } else {
+        process.stderr.write(`Unknown command: ${cmd}. See 'nimbus --help'.\n`);
+      }
       return 1;
+    }
   }
 }
 
 function printHelp(): void {
-  process.stdout.write(`nimbus — AI OS
+  process.stdout.write(`nimbus — AI OS cá nhân
 
-Usage: nimbus [command] [args]
+  Cách dùng:
+    nimbus                  chat với nimbus (mặc định)
+    nimbus init             thiết lập lần đầu
+    nimbus key              thêm / đổi API key
+    nimbus backup           sao lưu workspace
+    nimbus cost             xem chi phí hôm nay
+    nimbus check            kiểm tra hệ thống
+    nimbus telegram         kết nối Telegram
 
-Commands:
-  (default)  Enter interactive AI OS session in active workspace
-             Flags: --dangerously-skip-permissions (requires NIMBUS_BYPASS_CONFIRMED=1)
-  init       Onboarding wizard — create first workspace + SOUL.md, then enters REPL
-             Flags: --name <name>  --location <dir>  --force  --no-prompt  --no-chat
-  key        Manage provider API keys (set/list/delete/test)
-             Flags: --key-stdin  --key-from-env <VAR>  --base-url <url>  --test  --skip-test  --yes
-  doctor     Health check — platform, vault, permissions (exit 0=OK, 1=issues)
-  vault      Manage encrypted secrets vault
-             Subcommands: reset [--yes]  status
-  backup     Workspace backup and restore
-             Subcommands: create [--out FILE]  restore <file>  list
-  cost       View token + USD usage (v0.2)
-  status     1-line overview: OK | last error | today cost
-  health     Subsystem health + memory + disk  [--json]
-  metrics    p50/p95/p99 + tokens + cost       [--since 1h|1d] [--json]
-  errors     Error counts by code              [--since] [--code X_*] [--json]
-  trace      Turn event tree                   <turnId> [--json]
-  audit      Security events + exec/write log  [--since] [--severity] [--json]
-  skill      Manage skills from the registry
-             Subcommands: search [query]  install <name[@ver]>  list  info <name>
-                          upgrade <name>  revoke <name>  reassess <name>  audit
-  telegram   Configure built-in Telegram channel (token + allowlist)
-             Subcommands: set-token  allow <id>  remove <id>  list  status
-                          test  clear-token  reset --yes
-             Tip: connect to Telegram from the REPL — say "kết nối telegram"
+  Trong REPL: gõ /help để xem slash commands
 
-Future versions:
-  daemon     Install/manage background service (v0.4)
-
-Run \`nimbus <command> --help\` for command details.
+  Lệnh nâng cao:  nimbus debug         xem thêm: nimbus debug --help
+  Phiên bản:      nimbus --version
 `);
 }
 

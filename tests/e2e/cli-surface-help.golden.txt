@@ -1,0 +1,15 @@
+nimbus — AI OS cá nhân
+
+  Cách dùng:
+    nimbus                  chat với nimbus (mặc định)
+    nimbus init             thiết lập lần đầu
+    nimbus key              thêm / đổi API key
+    nimbus backup           sao lưu workspace
+    nimbus cost             xem chi phí hôm nay
+    nimbus check            kiểm tra hệ thống
+    nimbus telegram         kết nối Telegram
+
+  Trong REPL: gõ /help để xem slash commands
+
+  Lệnh nâng cao:  nimbus debug <sub>   (doctor, status, health, metrics, errors, trace, audit, vault)
+  Phiên bản:      nimbus --version

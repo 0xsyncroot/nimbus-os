@@ -2,9 +2,10 @@
 // Also exports autoProvisionPassphrase() used by init + key flows (SPEC-901 v0.2.1).
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
-import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { logger } from '../../observability/logger.ts';
 import type { SecretStore, VaultEnvelope } from './index.ts';
 import { VaultEnvelopeSchema } from './index.ts';
 import { NimbusError, ErrorCode } from '../../observability/errors.ts';
@@ -133,6 +134,86 @@ function ensureKey(salt: Buffer): Buffer {
   return key;
 }
 
+/** Write data atomically: tmp → chmod → rename. On any error, tmp is removed.
+ *  Not re-exported from module barrel; visible here for tests. */
+export async function writeAtomic(finalPath: string, data: string): Promise<void> {
+  const tmpPath = finalPath + '.tmp';
+  try {
+    await mkdir(dirname(finalPath), { recursive: true });
+    await writeFile(tmpPath, data, { encoding: 'utf8', mode: 0o600 });
+    if (process.platform !== 'win32') await chmod(tmpPath, 0o600);
+    await rename(tmpPath, finalPath);
+  } catch (err) {
+    try { await unlink(tmpPath); } catch { /* best-effort cleanup */ }
+    if (err instanceof NimbusError) throw err;
+    throw new NimbusError(ErrorCode.S_STORAGE_CORRUPT, {
+      reason: 'atomic_write_failed',
+      path: finalPath,
+    });
+  }
+}
+
+const BAK_PREFIX = '.bak-';
+const MAX_BACKUPS = 3;
+
+/** Rotate backups: copy current vault → secrets.enc.bak-{ISO8601}, prune to MAX_BACKUPS.
+ *  Not re-exported from module barrel; visible here for tests. */
+export async function rotateBackups(finalPath: string): Promise<void> {
+  // Check if the vault file exists; if not, skip silently (first write).
+  try {
+    await stat(finalPath);
+  } catch {
+    return;
+  }
+
+  const dir = dirname(finalPath);
+  const base = basename(finalPath);
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const bakPath = join(dir, base + BAK_PREFIX + ts);
+
+  try {
+    const current = await readFile(finalPath);
+    await writeFile(bakPath, current, { mode: 0o600 });
+    if (process.platform !== 'win32') await chmod(bakPath, 0o600);
+    logger.info({ bakPath }, 'vault backup created');
+  } catch (err) {
+    logger.warn({ err, bakPath }, 'vault backup write failed — skipping rotation');
+    return;
+  }
+
+  // Prune: list all .bak-* files, keep MAX_BACKUPS newest by mtime.
+  const { readdir } = await import('node:fs/promises');
+  let entries: string[];
+  try {
+    entries = (await readdir(dir)).filter((f) => f.startsWith(base + BAK_PREFIX));
+  } catch {
+    return;
+  }
+
+  // Collect mtime for each backup entry.
+  const withMtime: Array<{ name: string; mtimeMs: number }> = [];
+  for (const name of entries) {
+    try {
+      const s = await stat(join(dir, name));
+      withMtime.push({ name, mtimeMs: s.mtimeMs });
+    } catch {
+      // Ignore files that disappeared.
+    }
+  }
+
+  // Sort descending (newest first), prune tail beyond MAX_BACKUPS.
+  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const toDelete = withMtime.slice(MAX_BACKUPS);
+  for (const entry of toDelete) {
+    try {
+      await unlink(join(dir, entry.name));
+      logger.info({ name: entry.name }, 'vault backup pruned');
+    } catch (err) {
+      logger.warn({ err, name: entry.name }, 'vault backup prune failed');
+    }
+  }
+}
+
 async function saveData(data: VaultData): Promise<void> {
   const salt = cachedKey?.salt ?? randomBytes(SALT_LEN);
   const key = ensureKey(salt);
@@ -159,11 +240,8 @@ async function saveData(data: VaultData): Promise<void> {
     });
   }
   const path = vaultPath();
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, serialized, { encoding: 'utf8' });
-  if (process.platform !== 'win32') {
-    await chmod(path, 0o600);
-  }
+  await rotateBackups(path);
+  await writeAtomic(path, serialized);
 }
 
 export async function createFileFallback(): Promise<SecretStore> {

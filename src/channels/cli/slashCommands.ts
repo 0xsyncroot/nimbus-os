@@ -278,6 +278,21 @@ export function registerDefaultCommands(): void {
     },
   });
   registerSlash({
+    name: 'key',
+    description: 'Add / change API key interactively',
+    usage: '/key',
+    category: 'workspace',
+    handler: async (_args, ctx) => {
+      const { runInteractiveKeyManager } = await import('../../key/interactive.ts');
+      await runInteractiveKeyManager({
+        workspaceId: ctx.wsId,
+        input: process.stdin as NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (r: boolean) => unknown },
+        output: process.stdout,
+        isTTY: true,
+      });
+    },
+  });
+  registerSlash({
     name: 'spec-confirm',
     description: 'Set spec-confirm mode (always|auto)',
     usage: '/spec-confirm <always|auto>',

@@ -1,17 +1,20 @@
-// tests/onboard/recoveryPrompt.test.ts (SPEC-505)
+// tests/onboard/recoveryPrompt.test.ts (SPEC-505 v2)
 
 import { afterEach, beforeEach, describe, expect, test, mock, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { runRecoveryPrompt } from '../../src/onboard/recoveryPrompt.ts';
-import type { VaultStatus } from '../../src/platform/secrets/diagnose.ts';
+import { runRecoveryPrompt, type RecoveryInput } from '../../src/onboard/recoveryPrompt.ts';
 
 let tmpRoot: string;
 const originalHome = process.env['NIMBUS_HOME'];
 
-describe('SPEC-505: runRecoveryPrompt', () => {
+function makeInput(reason: RecoveryInput['reason'], dir: string): RecoveryInput {
+  return { reason, path: dir };
+}
+
+describe('SPEC-505: runRecoveryPrompt — non-TTY paths', () => {
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'nimbus-recovery-'));
     process.env['NIMBUS_HOME'] = tmpRoot;
@@ -23,98 +26,87 @@ describe('SPEC-505: runRecoveryPrompt', () => {
     else delete process.env['NIMBUS_HOME'];
   });
 
-  test('missing_file: returns true (allow boot) — benign', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'missing_file' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+  test('missing_file: returns true (allow boot) regardless of TTY', async () => {
+    const result = await runRecoveryPrompt(makeInput('missing_file', tmpRoot), { tty: false });
     expect(result).toBe(true);
   });
 
-  test('schema_newer: returns false (unresolvable) in non-TTY', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'schema_newer' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+  test('missing_file with tty=true still returns true (silent)', async () => {
+    const result = await runRecoveryPrompt(makeInput('missing_file', tmpRoot), { tty: true });
+    expect(result).toBe(true);
+  });
+
+  test('schema_newer: returns false (unresolvable) regardless of TTY', async () => {
+    const result = await runRecoveryPrompt(makeInput('schema_newer', tmpRoot), { tty: false });
     expect(result).toBe(false);
   });
 
-  test('decrypt_failed: returns false in non-TTY (no auto-fix)', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'decrypt_failed' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+  test('schema_newer with tty=true: returns false (cannot fix by re-entering key)', async () => {
+    const result = await runRecoveryPrompt(makeInput('schema_newer', tmpRoot), { tty: true });
+    expect(result).toBe(false);
+  });
+
+  test('decrypt_failed: returns false in non-TTY', async () => {
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot), { tty: false });
     expect(result).toBe(false);
   });
 
   test('missing_passphrase: returns false in non-TTY', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'missing_passphrase' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+    const result = await runRecoveryPrompt(makeInput('missing_passphrase', tmpRoot), { tty: false });
     expect(result).toBe(false);
   });
 
   test('corrupt_envelope: returns false in non-TTY', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'corrupt_envelope' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+    const result = await runRecoveryPrompt(makeInput('corrupt_envelope', tmpRoot), { tty: false });
     expect(result).toBe(false);
   });
 
-  test('schema_old: returns false in non-TTY (requires interactive fix)', async () => {
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'schema_old' };
-    const result = await runRecoveryPrompt(status, { tty: false });
+  test('schema_old: returns false in non-TTY', async () => {
+    const result = await runRecoveryPrompt(makeInput('schema_old', tmpRoot), { tty: false });
     expect(result).toBe(false);
+  });
+
+  test('all fixable reasons do not throw in non-TTY', async () => {
+    const reasons: RecoveryInput['reason'][] = [
+      'missing_file', 'missing_passphrase', 'decrypt_failed',
+      'corrupt_envelope', 'schema_old', 'schema_newer',
+    ];
+    for (const reason of reasons) {
+      await expect(
+        runRecoveryPrompt(makeInput(reason, tmpRoot), { tty: false }),
+      ).resolves.toBeDefined();
+    }
   });
 });
 
-describe('SPEC-505: reasonMessage text sanity', () => {
-  // Test that each reason produces a truthy message by importing private helper via recovery path
-  const reasons = [
-    'missing_file',
-    'missing_passphrase',
-    'decrypt_failed',
-    'corrupt_envelope',
-    'schema_old',
-    'schema_newer',
-  ] as const;
-
-  for (const reason of reasons) {
-    test(`non-TTY path for ${reason} does not throw`, async () => {
-      const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason };
-      // Should always return without throwing
-      await expect(runRecoveryPrompt(status, { tty: false })).resolves.toBeDefined();
-    });
-  }
-});
-
 // ---------------------------------------------------------------------------
-// BLOCKER 3: TTY-interactive path tests
-// We mock process.stdin with a PassThrough stream marked isTTY=true so that
-// promptChoice() reads from it. We also mock doVaultReset internals to avoid
-// real filesystem / network operations.
+// TTY interactive path tests
+// We mock process.stdin with a PassThrough stream marked isTTY=true.
 // ---------------------------------------------------------------------------
 
-describe('SPEC-505: runRecoveryPrompt TTY interactive path', () => {
+describe('SPEC-505: runRecoveryPrompt — TTY interactive paths', () => {
   let tmpRoot2: string;
   let originalStdin: NodeJS.ReadStream;
-  let promptSpy: ReturnType<typeof spyOn> | null = null;
-  let createManagerSpy: ReturnType<typeof spyOn> | null = null;
+  let interactiveSpy: ReturnType<typeof spyOn> | null = null;
 
   beforeEach(() => {
     tmpRoot2 = mkdtempSync(join(tmpdir(), 'nimbus-recovery-tty-'));
     process.env['NIMBUS_HOME'] = tmpRoot2;
     originalStdin = process.stdin;
-    promptSpy = null;
-    createManagerSpy = null;
+    interactiveSpy = null;
   });
 
   afterEach(() => {
-    promptSpy?.mockRestore();
-    createManagerSpy?.mockRestore();
+    interactiveSpy?.mockRestore();
     rmSync(tmpRoot2, { recursive: true, force: true });
     if (originalHome !== undefined) process.env['NIMBUS_HOME'] = originalHome;
     else delete process.env['NIMBUS_HOME'];
-    // Restore original stdin
     Object.defineProperty(process, 'stdin', { value: originalStdin, writable: true, configurable: true });
   });
 
   function makeStdin(data: string): NodeJS.ReadStream {
     const pt = new PassThrough();
     (pt as unknown as NodeJS.ReadStream).isTTY = true;
-    // Feed data after a tick so listeners are attached
     setTimeout(() => {
       pt.write(data);
       pt.end();
@@ -126,98 +118,114 @@ describe('SPEC-505: runRecoveryPrompt TTY interactive path', () => {
     Object.defineProperty(process, 'stdin', { value: stream, writable: true, configurable: true });
   }
 
-  test('TTY + choice-2 (skip) → returns true without calling doVaultReset', async () => {
-    // choice "2\n" → skip path → return true (allow boot, no reset)
-    const fakeStdin = makeStdin('2\n');
-    replaceStdin(fakeStdin);
-
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'decrypt_failed' };
-    const result = await runRecoveryPrompt(status, { tty: true });
-    // Skip choice → always returns true (boot continues, vault not fixed)
-    expect(result).toBe(true);
-  });
-
-  test('TTY + invalid choice falls back to default (choice-1) and calls doVaultReset', async () => {
-    // "xyz\n" is not a valid number → defaults to choice 0 (re-enter key = doVaultReset)
-    // We need vault file to exist for backup to succeed; mock passphrase + keyPrompt
+  test('Enter (empty input) → triggers interactive key manager → returns its result', async () => {
+    // Vault file exists so backup can proceed
     writeFileSync(join(tmpRoot2, 'secrets.enc'), 'fake-vault-data');
+    replaceStdin(makeStdin('\n'));
 
-    // Set up env to use file backend so autoProvisionPassphrase works
-    process.env['NIMBUS_SECRETS_BACKEND'] = 'file';
-    process.env['NIMBUS_VAULT_PASSPHRASE'] = 'test-passphrase-for-recovery';
+    // Mock runInteractiveKeyManager to avoid real key/network ops
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
 
-    const fakeStdin = makeStdin('xyz\n');
-    replaceStdin(fakeStdin);
-
-    // Mock keyPrompt.promptApiKey to avoid real TTY requirement in doVaultReset
-    const keyPromptModule = await import('../../src/onboard/keyPrompt.ts');
-    promptSpy = spyOn(keyPromptModule, 'promptApiKey').mockResolvedValue('sk-test-key-12345');
-
-    // Mock km.set + km.test so we don't hit real vault/network
-    const managerModule = await import('../../src/key/manager.ts');
-    createManagerSpy = spyOn(managerModule, 'createKeyManager').mockReturnValue({
-      set: mock(async () => {}),
-      test: mock(async () => ({ ok: true })),
-      get: mock(async () => null),
-      list: mock(async () => []),
-      delete: mock(async () => {}),
-      getBaseUrl: mock(async () => undefined),
-    } as unknown as ReturnType<typeof managerModule.createKeyManager>);
-
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'decrypt_failed' };
-    const result = await runRecoveryPrompt(status, { tty: true });
-
-    // doVaultReset was called → should return true (success) or false (error is also valid if mock incomplete)
-    expect(typeof result).toBe('boolean');
-    expect(promptSpy).toHaveBeenCalled();
-
-    delete process.env['NIMBUS_SECRETS_BACKEND'];
-    delete process.env['NIMBUS_VAULT_PASSPHRASE'];
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot2), { tty: true });
+    expect(result).toBe(true);
+    expect(interactiveSpy).toHaveBeenCalledTimes(1);
   });
 
-  test('TTY + EOF mid-choice → graceful exit, returns boolean without throwing', async () => {
-    // No data written, just end → EOF triggers onEnd → defaultIdx=0 → doVaultReset attempted
-    // We just assert no throw and boolean result
-    const pt = new PassThrough();
-    (pt as unknown as NodeJS.ReadStream).isTTY = true;
-    // Immediately end (EOF)
-    setTimeout(() => pt.end(), 0);
-    replaceStdin(pt as unknown as NodeJS.ReadStream);
+  test('s (skip) → returns true without calling interactive manager', async () => {
+    replaceStdin(makeStdin('s\n'));
 
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'missing_passphrase' };
-    // With EOF, promptChoice resolves to defaultIdx=0 → doVaultReset is attempted
-    // doVaultReset may succeed or fail (no real vault/keyPrompt) — either is fine, must not throw
-    const result = await runRecoveryPrompt(status, { tty: true }).catch(() => false);
-    expect(typeof result).toBe('boolean');
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
+
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot2), { tty: true });
+    expect(result).toBe(true);
+    expect(interactiveSpy).not.toHaveBeenCalled();
   });
 
-  test('missing_file with tty=true still returns true (silent no banner)', async () => {
-    // BLOCKER 4 fix: missing_file returns true silently regardless of TTY
-    const fakeStdin = makeStdin('1\n');
-    replaceStdin(fakeStdin);
+  test('S (uppercase skip) → returns true', async () => {
+    replaceStdin(makeStdin('S\n'));
 
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'missing_file' };
-    const result = await runRecoveryPrompt(status, { tty: true });
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
+
+    const result = await runRecoveryPrompt(makeInput('corrupt_envelope', tmpRoot2), { tty: true });
     expect(result).toBe(true);
   });
 
-  test('schema_newer + tty=true still returns false (canFix=false branch)', async () => {
-    // schema_newer cannot be fixed → even with TTY it returns false
-    const fakeStdin = makeStdin('1\n');
-    replaceStdin(fakeStdin);
+  test('q (quit) → returns false', async () => {
+    replaceStdin(makeStdin('q\n'));
 
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'schema_newer' };
-    const result = await runRecoveryPrompt(status, { tty: true });
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot2), { tty: true });
     expect(result).toBe(false);
   });
 
-  test('corrupt_envelope + tty=true + choice-2 (skip) → returns true', async () => {
-    const fakeStdin = makeStdin('2\n');
-    replaceStdin(fakeStdin);
+  test('Q (uppercase quit) → returns false', async () => {
+    replaceStdin(makeStdin('Q\n'));
 
-    const status: Extract<VaultStatus, { ok: false }> = { ok: false, reason: 'corrupt_envelope' };
-    const result = await runRecoveryPrompt(status, { tty: true });
-    // Choice 2 = skip → allow boot
+    const result = await runRecoveryPrompt(makeInput('missing_passphrase', tmpRoot2), { tty: true });
+    expect(result).toBe(false);
+  });
+
+  test('invalid input then skip → re-prompts, then returns true on s', async () => {
+    // 'x\n' is invalid → re-prompt; 's\n' → skip
+    replaceStdin(makeStdin('x\ns\n'));
+
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
+
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot2), { tty: true });
     expect(result).toBe(true);
+    expect(interactiveSpy).not.toHaveBeenCalled();
+  });
+
+  test('foo (invalid) then q → re-prompts, then returns false on q', async () => {
+    replaceStdin(makeStdin('foo\nq\n'));
+
+    const result = await runRecoveryPrompt(makeInput('schema_old', tmpRoot2), { tty: true });
+    expect(result).toBe(false);
+  });
+
+  test('backup created at secrets.enc.bak-*-corrupt before fix flow', async () => {
+    writeFileSync(join(tmpRoot2, 'secrets.enc'), 'fake-vault-bytes');
+    replaceStdin(makeStdin('\n'));
+
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
+
+    await runRecoveryPrompt(makeInput('corrupt_envelope', tmpRoot2), { tty: true });
+
+    const backups = readdirSync(tmpRoot2).filter((f) => f.match(/^secrets\.enc\.bak-.*-corrupt$/));
+    expect(backups.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('backup rotation: 6 corrupt backups → oldest pruned to 5', async () => {
+    // Pre-create 6 fake backup files with staggered mtimes
+    for (let i = 0; i < 6; i++) {
+      const ts = new Date(Date.now() - i * 60_000).toISOString().replace(/[:.]/g, '-');
+      writeFileSync(join(tmpRoot2, `secrets.enc.bak-${ts}-corrupt`), `backup-${i}`);
+    }
+    writeFileSync(join(tmpRoot2, 'secrets.enc'), 'vault-data');
+    replaceStdin(makeStdin('\n'));
+
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(0);
+
+    await runRecoveryPrompt(makeInput('corrupt_envelope', tmpRoot2), { tty: true });
+
+    const backups = readdirSync(tmpRoot2).filter((f) => f.match(/^secrets\.enc\.bak-.*-corrupt$/));
+    // After adding one more (7 total) and pruning, should have at most 5
+    expect(backups.length).toBeLessThanOrEqual(5);
+  });
+
+  test('fix flow exit code non-zero → returns false', async () => {
+    writeFileSync(join(tmpRoot2, 'secrets.enc'), 'fake-vault-data');
+    replaceStdin(makeStdin('\n'));
+
+    const interactiveModule = await import('../../src/key/interactive.ts');
+    interactiveSpy = spyOn(interactiveModule, 'runInteractiveKeyManager').mockResolvedValue(2);
+
+    const result = await runRecoveryPrompt(makeInput('decrypt_failed', tmpRoot2), { tty: true });
+    expect(result).toBe(false);
   });
 });

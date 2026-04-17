@@ -1,104 +1,110 @@
-// recoveryPrompt.ts — Interactive recovery UX for vault failures at startup (SPEC-505)
-// Handles each VaultStatus reason with a human-friendly prompt + guided fix.
+// recoveryPrompt.ts — Boot vault recovery UX v2 (SPEC-505)
+// Renders a calm Vietnamese prompt. Fix path delegates to SPEC-904 interactive key manager.
+// HARD RULES (from SPEC-505 + §10 user data sanctity):
+//   - Never write vault bytes directly (delegated entirely to SPEC-904 module)
+//   - Backup before any mutation: secrets.enc → secrets.enc.bak-{ts}-corrupt
+//   - Backup rotation: keep last 5 corrupt backups (prune older by mtime)
+//   - No passphrase logged
 
-import { unlink, copyFile, mkdir } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readdir, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { nimbusHome } from '../platform/paths.ts';
-import type { VaultStatus, VaultStatusReason } from '../platform/secrets/diagnose.ts';
+import type { VaultStatusReason } from '../platform/secrets/diagnose.ts';
 
 const VAULT_FILENAME = 'secrets.enc';
+const MAX_CORRUPT_BACKUPS = 5;
 
-function vaultPath(): string {
-  return join(nimbusHome(), VAULT_FILENAME);
+export interface RecoveryInput {
+  readonly reason: VaultStatusReason;
+  readonly path: string;
 }
 
-function brokenBackupPath(): string {
+// ---------------------------------------------------------------------------
+// Backup helpers
+// ---------------------------------------------------------------------------
+
+function corruptBackupPath(): string {
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  return join(nimbusHome(), `secrets.broken-${ts}.enc`);
+  return join(nimbusHome(), `secrets.enc.bak-${ts}-corrupt`);
 }
 
-function printBox(lines: string[]): void {
-  const width = Math.max(...lines.map((l) => l.length)) + 4;
-  const bar = '─'.repeat(width);
-  process.stdout.write(`\n┌${bar}┐\n`);
-  for (const line of lines) {
-    process.stdout.write(`│  ${line.padEnd(width - 2)}│\n`);
+async function backupCorruptVault(): Promise<void> {
+  const src = join(nimbusHome(), VAULT_FILENAME);
+  const dst = corruptBackupPath();
+  try {
+    await mkdir(nimbusHome(), { recursive: true });
+    await copyFile(src, dst);
+    // HARD RULE §6 (post-v0.3.6): vault-derived files MUST be 0o600 on POSIX.
+    // copyFile honors umask, which can leak 0o644 when user's umask is 0o022.
+    if (process.platform !== 'win32') await chmod(dst, 0o600);
+  } catch {
+    // vault may not exist — silently skip
   }
-  process.stdout.write(`└${bar}┘\n\n`);
+  await pruneCorruptBackups();
 }
 
-function reasonMessage(reason: VaultStatusReason): { title: string; body: string[]; canFix: boolean } {
-  switch (reason) {
-    case 'missing_file':
-      return {
-        title: 'No vault found',
-        body: [
-          'No secrets.enc file exists yet.',
-          'This is normal on first run.',
-          'Run `nimbus init` to set up your workspace.',
-        ],
-        canFix: false,
-      };
-    case 'missing_passphrase':
-      return {
-        title: 'Vault passphrase missing',
-        body: [
-          'The vault file exists but no passphrase was found.',
-          'Set NIMBUS_VAULT_PASSPHRASE env var, or run `nimbus vault reset`.',
-        ],
-        canFix: true,
-      };
-    case 'decrypt_failed':
-      return {
-        title: 'Upgrade issue detected',
-        body: [
-          'Your API key vault was created by an older nimbus and cannot',
-          'be decrypted by this version.',
-          '',
-          'Safe:     SOUL.md, MEMORY.md, sessions, workspace config',
-          'Affected: API key (needs re-entry)',
-        ],
-        canFix: true,
-      };
-    case 'corrupt_envelope':
-      return {
-        title: 'Vault file corrupt',
-        body: [
-          'The vault file exists but cannot be parsed.',
-          'It may have been corrupted or truncated.',
-        ],
-        canFix: true,
-      };
-    case 'schema_old':
-      return {
-        title: 'Vault schema outdated',
-        body: [
-          'The vault was written by an older version of nimbus.',
-          'Re-entering your API key will migrate it to the current format.',
-        ],
-        canFix: true,
-      };
-    case 'schema_newer':
-      return {
-        title: 'Vault created by newer nimbus',
-        body: [
-          'The vault was written by a newer version of nimbus.',
-          'Downgrade is not supported. Upgrade nimbus to continue.',
-        ],
-        canFix: false,
-      };
+async function pruneCorruptBackups(): Promise<void> {
+  const dir = nimbusHome();
+  let entries: string[];
+  try {
+    entries = (await readdir(dir)).filter((f) => f.match(/^secrets\.enc\.bak-.*-corrupt$/));
+  } catch {
+    return;
+  }
+
+  const withMtime: Array<{ name: string; mtimeMs: number }> = [];
+  for (const name of entries) {
+    try {
+      const s = await stat(join(dir, name));
+      withMtime.push({ name, mtimeMs: s.mtimeMs });
+    } catch {
+      // vanished
+    }
+  }
+
+  withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
+  const toDelete = withMtime.slice(MAX_CORRUPT_BACKUPS);
+  for (const entry of toDelete) {
+    try {
+      await unlink(join(dir, entry.name));
+    } catch {
+      // ignore
+    }
   }
 }
 
-async function promptChoice(prompt: string, choices: string[], defaultIdx = 0): Promise<number> {
-  process.stdout.write(`  ${prompt}\n\n`);
-  choices.forEach((c, i) => process.stdout.write(`  [${i + 1}] ${c}\n`));
-  process.stdout.write(`\n  Choice [${defaultIdx + 1}]: `);
+// ---------------------------------------------------------------------------
+// Prompt helpers
+// ---------------------------------------------------------------------------
 
-  return await new Promise<number>((resolve) => {
+const PROMPT_TEXT = [
+  '',
+  'Em không mở được API key đã lưu (vault bị khóa).',
+  '',
+  '  [Enter]  Nhập lại key ngay (khuyến nghị)',
+  '  [s]      Bỏ qua, mở nimbus không có key',
+  '  [q]      Thoát',
+  '',
+  'Chọn: ',
+].join('\n');
+
+type PromptChoice = 'fix' | 'skip' | 'quit' | 'invalid';
+
+function parseChoice(raw: string): PromptChoice {
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === '' || trimmed === 'enter') return 'fix';
+  if (trimmed === 's' || trimmed === 'skip') return 'skip';
+  if (trimmed === 'q' || trimmed === 'quit') return 'quit';
+  return 'invalid';
+}
+
+async function promptRecoveryChoice(): Promise<PromptChoice> {
+  // Accumulate all stdin data into a line buffer, handle multiple lines (re-prompt on invalid).
+  return new Promise<PromptChoice>((resolve) => {
     let buf = '';
     process.stdin.resume();
     process.stdin.setEncoding('utf8');
+    process.stdout.write(PROMPT_TEXT);
 
     const cleanup = (): void => {
       process.stdin.removeListener('data', onData);
@@ -107,31 +113,33 @@ async function promptChoice(prompt: string, choices: string[], defaultIdx = 0): 
     };
 
     const onEnd = (): void => {
-      // EOF / pipe closed — fall back to default choice gracefully
       cleanup();
       process.stdout.write('\n');
-      resolve(defaultIdx);
+      resolve('quit'); // EOF → quit
     };
 
     const onData = (chunk: string): void => {
-      // Handle Ctrl-C (SIGINT via raw byte 0x03 in raw mode, or SIGINT signal)
       if (chunk === '\x03') {
         cleanup();
         process.stdout.write('\n');
-        resolve(defaultIdx);
+        resolve('quit');
         return;
       }
       buf += chunk;
-      if (buf.includes('\n')) {
-        cleanup();
-        const trimmed = buf.trim();
-        const n = parseInt(trimmed, 10);
-        if (isNaN(n) || n < 1 || n > choices.length) {
-          resolve(defaultIdx);
-        } else {
-          resolve(n - 1);
+      // Process all complete lines in the buffer
+      let nlIdx: number;
+      while ((nlIdx = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nlIdx);
+        buf = buf.slice(nlIdx + 1);
+        const choice = parseChoice(line);
+        if (choice !== 'invalid') {
+          cleanup();
+          process.stdout.write('\n');
+          resolve(choice);
+          return;
         }
-        process.stdout.write('\n');
+        // Invalid → re-show prompt and read next line
+        process.stdout.write(PROMPT_TEXT);
       }
     };
 
@@ -140,116 +148,89 @@ async function promptChoice(prompt: string, choices: string[], defaultIdx = 0): 
   });
 }
 
-async function doVaultReset(): Promise<boolean> {
-  process.stdout.write('  Backing up broken vault...\n');
-  try {
-    const backup = brokenBackupPath();
-    await mkdir(nimbusHome(), { recursive: true });
-    await copyFile(vaultPath(), backup);
-    process.stdout.write(`  Backed up → ${backup}\n`);
-  } catch {
-    // vault may not exist — that's OK
-  }
+// ---------------------------------------------------------------------------
+// Fix flow — delegates to SPEC-904 runInteractiveKeyManager
+// ---------------------------------------------------------------------------
+
+async function runFixFlow(): Promise<boolean> {
+  await backupCorruptVault();
 
   try {
-    await unlink(vaultPath());
-  } catch {
-    // already gone
-  }
+    const { runInteractiveKeyManager } = await import('../key/interactive.ts');
+    const { getActiveWorkspace } = await import('../core/workspace.ts');
+    const ws = await getActiveWorkspace().catch(() => null);
+    const workspaceId = ws?.id ?? 'personal';
 
-  process.stdout.write('  Re-provisioning vault passphrase...\n');
-  const { autoProvisionPassphrase, __resetFileFallbackKey, __resetProvisionedPassphrase } =
-    await import('../platform/secrets/fileFallback.ts');
-  __resetProvisionedPassphrase();
-  __resetFileFallbackKey();
-  await autoProvisionPassphrase();
-
-  // Re-prompt for API key
-  const { getActiveWorkspace } = await import('../core/workspace.ts');
-  const ws = await getActiveWorkspace();
-  const provider = ws?.defaultProvider ?? 'anthropic';
-
-  try {
-    const { promptApiKey } = await import('./keyPrompt.ts');
-    process.stdout.write(`\n  Re-enter your API key to restore access.\n`);
-    const key = await promptApiKey({
-      provider,
-      prompt: `  ${provider} API key: `,
-      input: process.stdin as NodeJS.ReadStream,
+    const exitCode = await runInteractiveKeyManager({
+      workspaceId,
+      input: process.stdin,
       output: process.stdout,
+      isTTY: Boolean(process.stdin.isTTY),
     });
 
-    const { createKeyManager } = await import('../key/manager.ts');
-    const wsId = ws?.id ?? 'personal';
-    const km = createKeyManager();
-    await km.set(provider, key, { wsId });
-    process.stdout.write(`\n  Key stored. Verifying...\n`);
-
-    try {
-      const result = await km.test(provider, wsId);
-      if (result.ok) {
-        process.stdout.write(`  Vault restored. Ready.\n\n`);
-      } else {
-        process.stdout.write(`  Key stored (live test failed — check key or network).\n\n`);
-      }
-    } catch {
-      process.stdout.write(`  Key stored (verification skipped — network may be offline).\n\n`);
-    }
-    return true;
+    return exitCode === 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`  Key re-entry failed: ${msg}\n  Run \`nimbus vault reset\` manually.\n\n`);
+    process.stderr.write(`  Lỗi khi khôi phục key: ${msg}\n  Chạy \`nimbus key\` để thử lại.\n\n`);
     return false;
   }
 }
 
-export interface RecoveryOpts {
-  tty: boolean;
-}
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /**
  * runRecoveryPrompt — called at startup when diagnoseVault returns !ok.
- * Returns true if the issue was resolved and boot should continue.
- * Returns false if unresolvable (caller should exit 2).
+ * Returns true if handled (proceed to REPL), false if caller should exit 2.
  */
 export async function runRecoveryPrompt(
-  status: Extract<VaultStatus, { ok: false }>,
-  opts: RecoveryOpts,
+  input: RecoveryInput,
+  opts: { readonly tty: boolean },
 ): Promise<boolean> {
-  const { title, body, canFix } = reasonMessage(status.reason);
+  const { reason } = input;
 
   // missing_file is benign — first run before init wizard, always allow boot.
-  // BLOCKER 4: Return silently (no confusing "Run nimbus init" banner) — the
-  // caller's fall-through to runAutoInit() handles first-run setup correctly.
-  if (status.reason === 'missing_file') {
-    process.stdout.write(`  No vault yet — starting setup...\n`);
+  if (reason === 'missing_file') {
     return true;
   }
 
-  process.stdout.write(`\n  \u26a0  ${title}\n\n`);
-  for (const line of body) {
-    process.stdout.write(`  ${line}\n`);
-  }
-  process.stdout.write('\n');
-
-  // Non-TTY: print and bail
-  if (!opts.tty || !canFix) {
-    if (!canFix) {
-      process.stdout.write(`  Cannot auto-fix. See above for manual steps.\n`);
-    } else {
-      process.stdout.write(`  Non-interactive terminal. Run \`nimbus vault reset\` to fix.\n`);
-    }
+  // schema_newer is unresolvable — user must upgrade nimbus binary.
+  if (reason === 'schema_newer') {
+    process.stdout.write(
+      '\n  Vault được tạo bởi phiên bản nimbus mới hơn. Hãy nâng cấp nimbus để tiếp tục.\n\n',
+    );
     return false;
   }
 
-  printBox([`[1] Re-enter key now (recommended, ~10 sec)`, `[2] Skip (chat will not work until fixed)`]);
-
-  const choice = await promptChoice('Choose an option:', ['Re-enter key now', 'Skip'], 0);
-
-  if (choice === 0) {
-    return await doVaultReset();
+  // Non-TTY: cannot show interactive prompt. Still back up the broken vault
+  // so a future TTY session / manual recovery can inspect the original envelope.
+  if (!opts.tty) {
+    await backupCorruptVault();
+    process.stdout.write(
+      '\n  Em không mở được API key đã lưu (vault bị khóa).\n' +
+      '  Workspace, SOUL, MEMORY vẫn nguyên.\n' +
+      '  Non-interactive session — chạy `nimbus key` trên terminal để khôi phục.\n\n',
+    );
+    return false;
   }
 
-  process.stdout.write('  Skipping vault recovery. Run `nimbus vault reset` when ready.\n\n');
-  return true; // allow boot but chat will fail at provider level
+  const choice = await promptRecoveryChoice();
+
+  if (choice === 'fix') {
+    return await runFixFlow();
+  }
+
+  if (choice === 'skip') {
+    process.stdout.write(
+      '\nĐã bỏ qua. Chạy `nimbus check` khi em sẵn sàng để chẩn đoán.\n\n',
+    );
+    return true; // boot continues, no key — provider calls will fail gracefully
+  }
+
+  // quit
+  process.stdout.write(
+    '\nĐã thoát. Không thay đổi gì.\n\n',
+  );
+  return false;
 }
