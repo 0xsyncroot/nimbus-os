@@ -1,40 +1,30 @@
-// repl.ts — SPEC-801 T4+T5: interactive REPL wired to runTurn + slash dispatcher + SIGINT escalation.
-// SPEC-825: onAsk bridge wired to inline y/n/always/never prompt.
+// repl.ts — SPEC-851 T1/T4: startRepl() dispatcher.
+// Routes to Ink UI path (default) or legacy readline path (NIMBUS_UI=legacy).
+// Legacy path deprecated in v0.4.0 — scheduled for deletion in v0.4.1.
+//
+// CRITICAL: NIMBUS_UI=legacy detection happens BEFORE any Ink/React import
+// so that the legacy path adds zero overhead when the env var is set.
 
-import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 import { ErrorCode, NimbusError } from '../../observability/errors.ts';
 import { logger } from '../../observability/logger.ts';
-import { getActiveWorkspace, switchWorkspace, listAllWorkspaces } from '../../core/workspace.ts';
+import { getActiveWorkspace } from '../../core/workspace.ts';
 import { loadWorkspace } from '../../storage/workspaceStore.ts';
-import { getOrCreateSession, getCachedMessages, appendToCache } from '../../core/sessionManager.ts';
-import { runTurn } from '../../core/loop.ts';
-import { createTurnAbort, CANCEL_ESCALATION_WINDOW_MS } from '../../core/cancellation.ts';
-import { createProviderFromConfig } from '../../providers/registry.ts';
-import type { Provider } from '../../ir/types.ts';
-import type { TurnContext } from '../../core/turn.ts';
-import type { ToolInvocation as LoopToolInvocation } from '../../core/loop.ts';
 // eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): repl is the composition root; tool registry injected here until UIHost contract ships
-import { createDefaultRegistry, createLoopAdapter, type ToolRegistry } from '../../tools/index.ts';
-import { createCliUIHost } from './ui/cliHost.ts';
-import { createGate, compileRules, type Gate } from '../../permissions/index.ts';
-import { colors, prefixes } from './colors.ts';
-import { renderWelcome } from './welcome.ts';
-import { persistBootMeta } from '../../core/workspace.ts';
-import { createRenderer } from './render.ts';
-import {
-  dispatchSlash,
-  listCommands,
-  parseSlash,
-  registerDefaultCommands,
-  __resetRegistry,
-} from './slashCommands.ts';
-import { createAutocomplete, type AutocompleteInput } from './slashAutocomplete.ts';
-import { handleModelPicker } from './modelPicker.ts';
+import { createDefaultRegistry, createLoopAdapter } from '../../tools/index.ts';
+import { createGate, compileRules } from '../../permissions/index.ts';
 import { wireBusSubscribers } from './subscriptions.ts';
-// eslint-disable-next-line import/no-restricted-paths -- TODO(SPEC-830): repl sets runtimeBridge for Telegram tool; wiring point until UIHost contract ships
-import { setTelegramRuntimeBridge } from '../../tools/builtin/Telegram.ts';
 import { getChannelRuntime } from '../runtime.ts';
 import { formatBootError } from './errorFormatCli.ts';
+import { persistBootMeta } from '../../core/workspace.ts';
+import { registerDefaultCommands, __resetRegistry } from './slashCommands.ts';
+// eslint-disable-next-line import/no-restricted-paths -- composition root: Telegram bridge wired here
+import { setTelegramRuntimeBridge } from '../../tools/builtin/Telegram.ts';
+import type { UIHost } from '../../core/ui/index.ts';
+
+// Extended UIHost type matching loopAdapter contract
+type LoopUIHost = UIHost & { canAsk(): boolean };
+
+// ── Public interfaces ──────────────────────────────────────────────────────────
 
 export interface ReplOptions {
   workspaceId?: string;
@@ -44,133 +34,45 @@ export interface ReplOptions {
   output?: NodeJS.WritableStream;
 }
 
-interface ReplState {
-  wsId: string;
-  wsName: string;
-  provider: Provider | null;
-  model: string;
-  providerKind: 'anthropic' | 'openai-compat';
-  endpoint: 'openai' | 'groq' | 'deepseek' | 'ollama' | 'gemini' | 'custom' | undefined;
-  baseUrl: string | undefined;
-  mode: 'readonly' | 'default' | 'acceptEdits' | 'bypass';
-  running: boolean;
-  turnAbort: ReturnType<typeof createTurnAbort> | null;
-  lastCtrlCAt: number;
-  ctrlCCount: number;
-  registry: ToolRegistry;
-  gate: Gate;
-  skipPermissions: boolean;
-}
+// Re-export for legacy path compatibility and test imports
+export { makeOnAsk, parseConfirmAnswer } from './repl.legacy.ts';
 
-function promptStr(state: ReplState): string {
-  return `${colors.bold(state.wsName)} ${colors.dim('›')} `;
-}
+// ── startRepl — SPEC-851 T1 ────────────────────────────────────────────────────
 
-function resolveProviderKind(defaultProvider: string): 'anthropic' | 'openai-compat' {
-  return defaultProvider === 'anthropic' ? 'anthropic' : 'openai-compat';
-}
-
-async function lazyProvider(state: ReplState): Promise<Provider> {
-  if (state.provider) return state.provider;
-
-  // SPEC-902 bugfix #5 — baseUrl priority chain:
-  //   1. workspace.json defaultBaseUrl (explicit user intent, highest)
-  //   2. secret store meta.baseUrl (from `key set --base-url`)
-  //   3. OPENAI_BASE_URL env (legacy)
-  //   4. endpoint default (api.openai.com)
-  const providerId = state.providerKind === 'anthropic' ? 'anthropic' : state.endpoint === 'custom' || state.endpoint === undefined ? 'openai' : state.endpoint;
-  const { createKeyManager } = await import('../../key/manager.ts');
-  const km = createKeyManager();
-  let storedBaseUrl: string | undefined;
-  try {
-    storedBaseUrl = await km.getBaseUrl(providerId, state.wsId);
-  } catch {
-    storedBaseUrl = undefined;
-  }
-
-  const { resolveProviderKey } = await import('../../providers/registry.ts');
-  let apiKey: string | undefined;
-  try {
-    const resolved = await resolveProviderKey({
-      providerId,
-      wsId: state.wsId,
-    });
-    apiKey = resolved.apiKey;
-  } catch (err) {
-    if (err instanceof NimbusError && err.code === ErrorCode.T_NOT_FOUND) {
-      // expected — key just not stored yet; leave apiKey undefined
-    } else {
-      throw err; // propagate U_MISSING_CONFIG, X_CRED_ACCESS so user sees real error
-    }
-  }
-
-  const cfg: Parameters<typeof createProviderFromConfig>[0] = {
-    kind: state.providerKind,
-    model: state.model,
-  };
-  if (apiKey) cfg.apiKey = apiKey;
-
-  if (state.providerKind === 'openai-compat') {
-    const envBase = process.env['OPENAI_BASE_URL'];
-    const effectiveBaseUrl = state.baseUrl ?? storedBaseUrl ?? envBase;
-    if (state.endpoint === 'custom' || (effectiveBaseUrl && !state.endpoint)) {
-      cfg.endpoint = 'custom';
-      if (effectiveBaseUrl) cfg.baseUrl = effectiveBaseUrl;
-      if (!apiKey) cfg.apiKey = process.env['OPENAI_API_KEY'];
-    } else if (state.endpoint) {
-      cfg.endpoint = state.endpoint;
-      if (effectiveBaseUrl) cfg.baseUrl = effectiveBaseUrl;
-    } else {
-      cfg.endpoint = 'openai';
-    }
-  } else if (state.providerKind === 'anthropic') {
-    // anthropic: workspace.json defaultBaseUrl → secret-store meta.baseUrl → SDK default.
-    const baseUrl = state.baseUrl ?? storedBaseUrl;
-    if (baseUrl) cfg.baseUrl = baseUrl;
-  }
-
-  const provider = createProviderFromConfig(cfg);
-  state.provider = provider;
-  return provider;
-}
-
+/**
+ * Start the REPL. Mounts Ink <App> unless NIMBUS_UI=legacy.
+ * Does not return until the session ends (Ctrl-C or /exit).
+ */
 export async function startRepl(opts: ReplOptions = {}): Promise<void> {
-  const output = opts.output ?? process.stdout;
-  const input = opts.input ?? process.stdin;
-  const write = (s: string): void => {
-    output.write(s);
-  };
+  // SPEC-851 §3: legacy detection before any Ink import — no React overhead in legacy mode.
+  const useInk = !process.env['NIMBUS_UI'] || process.env['NIMBUS_UI'] === 'ink';
+  if (!useInk) {
+    const { startReplLegacy } = await import('./repl.legacy.ts');
+    return startReplLegacy(opts);
+  }
 
-  // Fix 1a — auto-provision vault passphrase on REPL boot so vault decrypt works
-  // without requiring the user to re-run init. No-op if already provisioned or no
-  // workspace yet (runAutoInit will call it on its own path).
-  //
-  // v0.3.7 URGENT FIX — if autoProvisionPassphrase raises X_CRED_ACCESS /
-  // vault_locked (new guard for "vault exists but passphrase unavailable"),
-  // surface the friendly hint NOW instead of waiting for the first chat turn
-  // to fail with U_MISSING_CONFIG. The REPL still enters so the user can type
-  // `/help`, pick a different workspace, etc.; their chat will produce the
-  // same friendly message at turn time.
+  return startReplInk(opts);
+}
+
+// ── startReplInk — Ink path ────────────────────────────────────────────────────
+
+async function startReplInk(opts: ReplOptions = {}): Promise<void> {
+  // v0.3.7 fix: auto-provision vault passphrase on boot; surface X_CRED_ACCESS early.
   {
     const { autoProvisionPassphrase } = await import('../../platform/secrets/fileFallback.ts');
     try {
       await autoProvisionPassphrase();
     } catch (err) {
       if (err instanceof NimbusError && err.code === ErrorCode.X_CRED_ACCESS) {
-        const formatted = formatBootError(
-          { code: err.code, context: err.context },
-          'vi',
-        );
-        write(`${colors.warn(prefixes.warn)} ${formatted.line}\n`);
-        if (formatted.hint) {
-          write(`${colors.dim(`  → ${formatted.hint}`)}\n`);
-        }
+        const formatted = formatBootError({ code: err.code, context: err.context }, 'vi');
+        process.stderr.write(`[nimbus] ${formatted.line}\n`);
+        if (formatted.hint) process.stderr.write(`[nimbus]   → ${formatted.hint}\n`);
       }
-      // Other errors (no workspace yet, etc.) — silently continue;
-      // runAutoInit will handle them on its own path.
+      // Other errors (no workspace yet) → silently continue; init handles them.
     }
   }
 
+  // ── Workspace resolution ───────────────────────────────────────────────────
   let wsId = opts.workspaceId;
   if (!wsId) {
     const active = await getActiveWorkspace();
@@ -184,522 +86,207 @@ export async function startRepl(opts: ReplOptions = {}): Promise<void> {
   }
 
   const loaded = await loadWorkspace(wsId);
-  const kind = resolveProviderKind(loaded.meta.defaultProvider);
-
-  const registry = createDefaultRegistry({ includeBash: true, includeMemory: true });
-  const gate = createGate({
-    rules: compileRules([]),
-    bypassCliFlag: opts.skipPermissions === true,
-  });
-
-  const state: ReplState = {
-    wsId: loaded.meta.id,
-    wsName: loaded.meta.name,
-    provider: null,
-    providerKind: kind,
-    endpoint: loaded.meta.defaultEndpoint,
-    baseUrl: loaded.meta.defaultBaseUrl,
-    model: loaded.meta.defaultModel,
-    mode: 'default',
-    running: true,
-    turnAbort: null,
-    lastCtrlCAt: 0,
-    ctrlCCount: 0,
-    registry,
-    gate,
-    skipPermissions: opts.skipPermissions === true,
-  };
+  const mode = opts.skipPermissions ? 'bypass' : 'default';
 
   if (opts.skipPermissions) {
     if (process.env['NIMBUS_BYPASS_CONFIRMED'] !== '1') {
-      write(`${colors.err(prefixes.err)} --dangerously-skip-permissions requires NIMBUS_BYPASS_CONFIRMED=1\n`);
+      process.stderr.write('[nimbus] --dangerously-skip-permissions requires NIMBUS_BYPASS_CONFIRMED=1\n');
       throw new NimbusError(ErrorCode.U_MISSING_CONFIG, { reason: 'bypass_not_confirmed' });
     }
-    state.mode = 'bypass';
-    write(`${colors.warn(prefixes.warn)} permissions bypass enabled — destructive actions will NOT prompt\n`);
+    process.stderr.write('[nimbus] permissions bypass enabled — destructive actions will NOT prompt\n');
   }
 
+  // ── Slash commands + bus ───────────────────────────────────────────────────
   __resetRegistry();
   registerDefaultCommands();
+  const unwireBus = wireBusSubscribers({ workspaceId: loaded.meta.id, channel: 'cli' });
 
-  const unwireBus = wireBusSubscribers({ workspaceId: state.wsId, channel: 'cli' });
-
-  // SPEC-309: eagerly materialise the ChannelRuntime so that
-  // `registerChannelService()` fires and the ChannelService port is available
-  // to tools (TelegramStatus etc.) on first invocation. Without this call the
-  // runtime singleton stays null until REPL shutdown and tools see the
-  // fallback "channel service not available in this context" message.
-  // `createChannelManager()` is a pure factory; no adapters start here.
+  // Eagerly materialise ChannelRuntime so tools can use ChannelService port
   getChannelRuntime();
 
-  // SPEC-808: bind the Telegram tool bridge so ConnectTelegram can start the
-  // adapter with the same provider/model/registry/gate the REPL uses. The
-  // bridge captures a closure over `state`; a tool invocation happens during
-  // runTurn where the provider is already lazy-initialised.
-  setTelegramRuntimeBridge((_toolCtx) => {
-    if (!state.provider) return null; // provider not yet initialised — shouldn't happen mid-turn
-    return {
-      provider: state.provider,
-      model: state.model,
-      registry: state.registry,
-      gate: state.gate,
-      cwd: process.cwd(),
-    };
-  });
+  // ── Tool registry + gate ──────────────────────────────────────────────────
+  const registry = createDefaultRegistry({ includeBash: true, includeMemory: true });
+  const gate = createGate({ rules: compileRules([]), bypassCliFlag: opts.skipPermissions === true });
 
-  // SPEC-823 T4 — persist boot meta, then render welcome screen
+  // ── Boot meta ─────────────────────────────────────────────────────────────
   let bootedMeta = loaded.meta;
-  try {
-    bootedMeta = await persistBootMeta(state.wsId);
-  } catch {
-    // non-fatal: welcome still renders with defaults
-  }
-  const welcomeCols = (output as NodeJS.WriteStream).columns ?? 80;
-  const welcomeIsTTY = (output as NodeJS.WriteStream).isTTY === true;
-  const welcomeNoColor = process.env['NO_COLOR'] !== undefined && process.env['NO_COLOR'] !== '';
-  const welcome = renderWelcome({
-    wsName: state.wsName,
-    model: state.model,
-    providerKind: state.providerKind,
-    endpoint: state.endpoint,
-    lastBootAt: bootedMeta.lastBootAt,
-    numStartups: bootedMeta.numStartups,
-    cols: welcomeCols,
-    isTTY: welcomeIsTTY,
-    noColor: welcomeNoColor,
-  });
-  write(`${welcome}\n`);
+  try { bootedMeta = await persistBootMeta(loaded.meta.id); } catch { /* non-fatal */ }
 
-  const rl = createInterface({ input, output, terminal: true });
+  // ── WorkspaceSummary for Ink ──────────────────────────────────────────────
+  const workspace = {
+    id: loaded.meta.id,
+    name: loaded.meta.name,
+    defaultProvider: loaded.meta.defaultProvider,
+    defaultModel: loaded.meta.defaultModel,
+  };
 
-  const ctx = makeReplContext(state, rl, write, input, output);
+  // ── Shared UIHost slot — set after Ink mounts ──────────────────────────────
+  let inkUIHost: LoopUIHost | undefined;
 
-  rl.on('SIGINT', () => {
-    handleSigint(state, rl, write);
-  });
+  // ── Ink mount ─────────────────────────────────────────────────────────────
+  const { mountReplApp } = await import('./ink/repl.tsx');
 
-  rl.on('close', () => {
-    state.running = false;
-  });
+  // We need a submit handler that runs a turn via the loop adapter.
+  // Provider is lazy-loaded on first submit so startup stays fast.
+  let providerCache: import('../../ir/types.ts').Provider | null = null;
 
-  const renderer = createRenderer(write);
-
-  // TTY check: use autocomplete dropdown when running interactively.
-  const ttyInput = input as AutocompleteInput;
-  const isTTY = ttyInput.isTTY === true && typeof ttyInput.setRawMode === 'function' &&
-    process.env['TERM'] !== 'dumb';
-
-  // SPEC-832: create CliUIHost at REPL startup.
-  const colorEnabled = process.env['NO_COLOR'] === undefined || process.env['NO_COLOR'] === '';
-  const cliUIHost = createCliUIHost({
-    stdin: ttyInput as NodeJS.ReadableStream & { setRawMode?: (raw: boolean) => unknown; isTTY?: boolean },
-    stdout: output as NodeJS.WriteStream,
-    isTTY,
-    colorEnabled,
-  });
-
-  const ac = isTTY
-    ? createAutocomplete({
-        input: ttyInput,
-        output,
-        promptStr: () => promptStr(state),
-        commands: listCommands,
-        cols: () => (process.stdout.columns ?? 80),
-      })
-    : null;
-
-  // SIGWINCH: refresh cols for autocomplete (no-op for non-TTY)
-  const onSigwinch = (): void => { /* cols() re-reads process.stdout.columns live */ };
-  if (isTTY) process.on('SIGWINCH', onSigwinch);
-
-  while (state.running) {
-    let line: string | null;
-    if (ac) {
-      line = await ac.readLine();
+  async function getProvider(): Promise<import('../../ir/types.ts').Provider> {
+    if (providerCache) return providerCache;
+    const { createProviderFromConfig } = await import('../../providers/registry.ts');
+    const providerId = loaded.meta.defaultProvider === 'anthropic' ? 'anthropic' :
+      loaded.meta.defaultEndpoint === 'custom' || !loaded.meta.defaultEndpoint ? 'openai' :
+      loaded.meta.defaultEndpoint;
+    const { createKeyManager } = await import('../../key/manager.ts');
+    const km = createKeyManager();
+    let storedBaseUrl: string | undefined;
+    try { storedBaseUrl = await km.getBaseUrl(providerId, loaded.meta.id); } catch { /* no stored url */ }
+    const { resolveProviderKey } = await import('../../providers/registry.ts');
+    let apiKey: string | undefined;
+    try {
+      const resolved = await resolveProviderKey({ providerId, wsId: loaded.meta.id });
+      apiKey = resolved.apiKey;
+    } catch (err) {
+      if (!(err instanceof NimbusError && err.code === ErrorCode.T_NOT_FOUND)) throw err;
+    }
+    const providerKind: 'anthropic' | 'openai-compat' = loaded.meta.defaultProvider === 'anthropic' ? 'anthropic' : 'openai-compat';
+    const cfg: Parameters<typeof createProviderFromConfig>[0] = { kind: providerKind, model: loaded.meta.defaultModel };
+    if (apiKey) cfg.apiKey = apiKey;
+    if (providerKind === 'openai-compat') {
+      const envBase = process.env['OPENAI_BASE_URL'];
+      const effectiveBaseUrl = loaded.meta.defaultBaseUrl ?? storedBaseUrl ?? envBase;
+      if (loaded.meta.defaultEndpoint === 'custom' || (effectiveBaseUrl && !loaded.meta.defaultEndpoint)) {
+        cfg.endpoint = 'custom';
+        if (effectiveBaseUrl) cfg.baseUrl = effectiveBaseUrl;
+        if (!apiKey) cfg.apiKey = process.env['OPENAI_API_KEY'];
+      } else if (loaded.meta.defaultEndpoint) {
+        cfg.endpoint = loaded.meta.defaultEndpoint;
+        if (effectiveBaseUrl) cfg.baseUrl = effectiveBaseUrl;
+      } else {
+        cfg.endpoint = 'openai';
+      }
     } else {
-      line = await readLine(rl, promptStr(state));
+      const baseUrl = loaded.meta.defaultBaseUrl ?? storedBaseUrl;
+      if (baseUrl) cfg.baseUrl = baseUrl;
     }
-    if (line === null) break;
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
+    providerCache = createProviderFromConfig(cfg);
+    return providerCache;
+  }
 
-    if (parseSlash(trimmed)) {
-      await dispatchSlash(trimmed, ctx);
-      if (!state.running) break;
-      continue;
+  // Telegram bridge (SPEC-808): must be set before first submit.
+  setTelegramRuntimeBridge((_toolCtx) => {
+    if (!providerCache) return null;
+    return { provider: providerCache, model: loaded.meta.defaultModel, registry, gate, cwd: process.cwd() };
+  });
+
+  async function handleSubmit(value: string): Promise<void> {
+    let provider: import('../../ir/types.ts').Provider;
+    try {
+      provider = await getProvider();
+    } catch (err) {
+      if (err instanceof NimbusError) {
+        const formatted = formatBootError({ code: err.code, context: err.context }, 'vi');
+        logger.warn({ code: err.code, context: err.context }, 'provider init failed (ink path)');
+        // Publish to event bus so ErrorDialog picks it up
+        const { getGlobalBus } = await import('../../core/events.ts');
+        const { TOPICS } = await import('../../core/eventTypes.ts');
+        getGlobalBus().publish(TOPICS.ui.error, {
+          type: 'ui.error',
+          error: err,
+          ts: Date.now(),
+        });
+        process.stderr.write(`[nimbus] ${formatted.line}\n`);
+      } else {
+        logger.error({ err: (err as Error).message }, 'provider init failed (ink path)');
+      }
+      return;
     }
 
-    await runSingleTurn(state, trimmed, renderer, write, input, output, isTTY, cliUIHost);
-  }
+    const { getOrCreateSession, getCachedMessages, appendToCache } = await import('../../core/sessionManager.ts');
+    const { runTurn } = await import('../../core/loop.ts');
+    const { createTurnAbort } = await import('../../core/cancellation.ts');
 
-  if (isTTY) process.off('SIGWINCH', onSigwinch);
-  ac?.dispose();
-  unwireBus();
-  // SPEC-808: tear down channel runtime so the Telegram long-poll doesn't
-  // leak across REPL exit.
-  try {
-    await getChannelRuntime().dispose();
-  } catch {
-    // best-effort cleanup
-  }
-  setTelegramRuntimeBridge(null);
-  rl.close();
-}
-
-function handleSigint(state: ReplState, rl: ReadlineInterface, write: (s: string) => void): void {
-  const now = Date.now();
-  if (now - state.lastCtrlCAt > CANCEL_ESCALATION_WINDOW_MS) state.ctrlCCount = 0;
-  state.ctrlCCount += 1;
-  state.lastCtrlCAt = now;
-  if (state.turnAbort && state.ctrlCCount === 1) {
-    state.turnAbort.turn.abort(new Error('sigint_user'));
-    write(`\n${colors.warn(prefixes.warn)} cancelling turn...\n`);
-    return;
-  }
-  if (state.ctrlCCount >= 2) {
-    write(`\n${colors.dim('bye.')}\n`);
-    state.running = false;
-    rl.close();
-  } else {
-    write(`\n${colors.dim('(press Ctrl-C again to exit)')}\n`);
-    rl.prompt();
-  }
-}
-
-function readLine(rl: ReadlineInterface, prompt: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (v: string | null): void => {
-      if (done) return;
-      done = true;
-      rl.off('line', onLine);
-      rl.off('close', onClose);
-      resolve(v);
+    const session = await getOrCreateSession(loaded.meta.id);
+    const abort = createTurnAbort();
+    const turnCtx: import('../../core/turn.ts').TurnContext = {
+      sessionId: session.id,
+      wsId: loaded.meta.id,
+      channel: 'cli',
+      mode,
+      abort,
+      provider,
+      model: loaded.meta.defaultModel,
     };
-    const onLine = (line: string): void => finish(line);
-    const onClose = (): void => finish(null);
-    rl.once('line', onLine);
-    rl.once('close', onClose);
-    rl.setPrompt(prompt);
-    rl.prompt();
-  });
-}
 
-function makeReplContext(
-  state: ReplState,
-  rl: ReadlineInterface,
-  write: (s: string) => void,
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
-): import('./slashCommands.ts').ReplContext {
-  return {
-    wsId: state.wsId,
-    write: (line: string) => write(line.endsWith('\n') ? line : `${line}\n`),
-    setMode: (m) => {
-      if (m === 'bypass' && !state.skipPermissions) {
-        write(`${colors.err(prefixes.err)} bypass requires --dangerously-skip-permissions at startup\n`);
-        return;
-      }
-      state.mode = m;
-      write(`${colors.dim(`mode: ${m}`)}\n`);
-    },
-    currentMode: () => state.mode,
-    cancelTurn: () => {
-      if (state.turnAbort) state.turnAbort.turn.abort(new Error('user_stop'));
-    },
-    quit: () => {
-      state.running = false;
-      rl.close();
-    },
-    newSession: async () => {
-      // Force-create new session by resetting cache is not exposed; simplest: create+use.
-      const { createSession } = await import('../../storage/sessionStore.ts');
-      const meta = await createSession(state.wsId);
-      const { setActiveSession } = await import('../../core/sessionManager.ts');
-      await setActiveSession(state.wsId, meta);
-      write(`${colors.ok(prefixes.ok)} new session ${meta.id}\n`);
-    },
-    clearScreen: () => {
-      // v0.3.3 fix — /clear was routed to LLM as natural text; now a first-class slash command.
-      // Standard ANSI: \x1b[2J erases screen, \x1b[3J clears scrollback, \x1b[H homes cursor.
-      const isTerminal = (output as NodeJS.WriteStream).isTTY === true;
-      if (isTerminal) write('\x1b[2J\x1b[3J\x1b[H');
-    },
-    switchWorkspace: async (name: string) => {
-      const all = await listAllWorkspaces();
-      const target = all.find((w) => w.name === name || w.id === name);
-      if (!target) {
-        write(`${colors.err(prefixes.err)} workspace not found: ${name}\n`);
-        return;
-      }
-      await switchWorkspace(target.id);
-      state.wsId = target.id;
-      state.wsName = target.name;
-      state.model = target.defaultModel;
-      state.providerKind = resolveProviderKind(target.defaultProvider);
-      state.endpoint = target.defaultEndpoint;
-      state.baseUrl = target.defaultBaseUrl;
-      state.provider = null;
-      write(`${colors.ok(prefixes.ok)} switched to ${target.name}\n`);
-    },
-    listWorkspaces: async () => {
-      const all = await listAllWorkspaces();
-      if (all.length === 0) {
-        write('no workspaces\n');
-        return;
-      }
-      for (const w of all) {
-        const active = w.id === state.wsId ? colors.ok('*') : ' ';
-        write(`${active} ${w.name.padEnd(20)} ${colors.dim(w.defaultModel)}\n`);
-      }
-    },
-    showSoul: async () => {
-      const { paths } = await loadWorkspace(state.wsId);
-      const f = Bun.file(paths.soulMd);
-      if (await f.exists()) write(`${await f.text()}\n`);
-      else write('SOUL.md not found\n');
-    },
-    showMemory: async () => {
-      const { paths } = await loadWorkspace(state.wsId);
-      const f = Bun.file(paths.memoryMd);
-      if (await f.exists()) write(`${await f.text()}\n`);
-      else write('MEMORY.md not found\n');
-    },
-    showIdentity: async () => {
-      const { paths } = await loadWorkspace(state.wsId);
-      const f = Bun.file(paths.identityMd);
-      if (await f.exists()) write(`${await f.text()}\n`);
-      else write('IDENTITY.md not found\n');
-    },
-    setProvider: async (p: string) => {
-      if (!p) {
-        write(`provider: ${state.providerKind}\n`);
-        return;
-      }
-      write(`${colors.dim('provider change requires workspace edit; see workspace.json')}\n`);
-    },
-    setModel: async (m: string) => {
-      if (!m) {
-        write(`model: ${state.model}\n`);
-        return;
-      }
-      state.model = m;
-      state.provider = null;
-      write(`${colors.ok(prefixes.ok)} model now ${m} (session-only)\n`);
-    },
-    pickModel: async () => {
-      const { meta } = await loadWorkspace(state.wsId);
-      const providerId = state.providerKind === 'anthropic' ? 'anthropic' : state.endpoint ?? 'openai';
-      let apiKey: string | undefined;
-      try {
-        const { resolveProviderKey } = await import('../../providers/registry.ts');
-        const resolved = await resolveProviderKey({ providerId, wsId: state.wsId });
-        apiKey = resolved.apiKey;
-      } catch {
-        apiKey = undefined;
-      }
-      const pickerInput = input as NodeJS.ReadableStream & { setRawMode?: (raw: boolean) => unknown; isTTY?: boolean };
-      const selected = await handleModelPicker({
-        workspace: meta,
-        apiKey,
-        output,
-        input: pickerInput,
-      });
-      if (selected) {
-        state.model = selected;
-        state.provider = null;
-        write(`${colors.ok(prefixes.ok)} model set to ${selected} (saved to workspace)\n`);
-      }
-    },
-    showCost: async () => {
-      // SPEC-701: route to cost aggregator for active workspace (default window=today).
-      try {
-        const { aggregate } = await import('../../cost/aggregator.ts');
-        const { renderRollup } = await import('../../cost/dashboard.ts');
-        const rollup = await aggregate(state.wsId, 'today');
-        write(`${renderRollup(rollup, { window: 'today', by: 'provider' })}\n`);
-      } catch (err) {
-        write(`${colors.err(prefixes.err)} cost: ${(err as Error).message}\n`);
-      }
-    },
-    setSpecConfirm: (_mode) => {
-      // SPEC-132: spec-confirm mode removed (taskSpec superseded by TodoWriteTool)
-    },
-  };
-}
-
-/** SPEC-825 T3: human-readable description of what the tool will do.
- *  SPEC-826 will expand this properly; this is the v0.3.2 inline subset. */
-function humanizeToolInvocation(inv: LoopToolInvocation): string {
-  const input = (inv.input ?? {}) as Record<string, unknown>;
-  const path = typeof input['path'] === 'string' ? input['path'] : undefined;
-  const filePath = typeof input['filePath'] === 'string' ? input['filePath'] : path;
-  switch (inv.name) {
-    case 'Write': return `ghi file ${filePath ?? '?'}`;
-    case 'Edit': return `sửa ${filePath ?? '?'}`;
-    case 'MultiEdit': return `sửa nhiều ${filePath ?? '?'}`;
-    case 'Bash': {
-      const cmd = typeof input['cmd'] === 'string' ? input['cmd'] : typeof input['command'] === 'string' ? input['command'] : '?';
-      return `chạy lệnh: ${cmd.slice(0, 60)}`;
-    }
-    case 'NotebookEdit': return `sửa notebook ${filePath ?? '?'}`;
-    default: return inv.name;
-  }
-}
-
-/** SPEC-825 T3: parse y/n/always/never from raw answer string.
- *  Exported for tests. */
-export function parseConfirmAnswer(raw: string): 'allow' | 'deny' | 'always' | null {
-  const v = raw.trim().toLowerCase();
-  if (v === 'y' || v === 'yes' || v === '') return 'allow';
-  if (v === 'n' || v === 'no') return 'deny';
-  if (v === 'always' || v === 'a') return 'always';
-  if (v === 'never') return 'deny';
-  return null;
-}
-
-/** SPEC-825 T3: build the onAsk callback for the loop adapter.
- *  Streams the question to output and reads one line from input.
- *  Falls back to 'deny' on timeout (10s) or non-interactive TTY.
- *
- *  v0.3.5 URGENT FIX: prior impl used node:readline createInterface to read
- *  the y/n answer. On rl.close() Node/Bun explicitly PAUSES stdin.
- *
- *  v0.3.10 FIX (Bug B — double-echo): prior impl attached on('data', onData)
- *  BEFORE setRawMode(true). A keystroke arriving while still in cooked mode got
- *  kernel-echoed PLUS onData output.write(ch) → double char → "yy" for one "y".
- *  Fix: call setRawMode(true) and resume() BEFORE attaching the data listener. */
-export function makeOnAsk(
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
-  isTTY: boolean,
-): ((inv: LoopToolInvocation) => Promise<'allow' | 'deny' | 'always'>) | undefined {
-  if (!isTTY) return undefined;
-  return async (inv: LoopToolInvocation): Promise<'allow' | 'deny' | 'always'> => {
-    const humanAction = humanizeToolInvocation(inv);
-    const question = `${colors.warn(prefixes.ask)} Cho em ${humanAction}?`;
-    // v0.3.11 fix: delegate to confirmPick() arrow-key widget (single source
-    // of truth). Previous manual raw-mode handler was still hitting the
-    // double-echo bug ("yy" from one "y" keystroke) because stdin's kernel
-    // buffer could retain a cooked-mode echoed char when raw mode was
-    // toggled mid-turn. confirmPick owns rawMode acquisition + buffer drain
-    // the same way pickOne does for slash commands.
-    const { confirmPick } = await import('../../onboard/picker.ts');
-    const decision = await confirmPick(question, {
-      input: input as NodeJS.ReadableStream & { setRawMode?: (b: boolean) => unknown; isTTY?: boolean },
-      output,
+    const toolAdapter = createLoopAdapter({
+      registry,
+      permissions: gate,
+      workspaceId: loaded.meta.id,
+      sessionId: session.id,
+      cwd: process.cwd(),
+      mode,
+      host: inkUIHost && mode !== 'bypass' ? inkUIHost : undefined,
     });
-    if (decision === 'never') return 'deny'; // 'never' semantics not yet wired; treat as deny for v0.3.11
-    return decision;
-  };
-}
 
-async function runSingleTurn(
-  state: ReplState,
-  userMessage: string,
-  renderer: ReturnType<typeof createRenderer>,
-  write: (s: string) => void,
-  input: NodeJS.ReadableStream,
-  output: NodeJS.WritableStream,
-  isTTY: boolean,
-  host?: ReturnType<typeof createCliUIHost>,
-): Promise<void> {
-  const session = await getOrCreateSession(state.wsId);
-  const abort = createTurnAbort();
-  state.turnAbort = abort;
-  let provider: Provider;
-  try {
-    provider = await lazyProvider(state);
-  } catch (err) {
-    if (err instanceof NimbusError) {
-      // v0.3.7 URGENT FIX — replace raw JSON dump with a friendly sentence +
-      // explicit recovery hint. Users who saw `U_MISSING_CONFIG: {...}` in
-      // v0.3.6 after a binary upgrade had no idea what to do next.
-      const formatted = formatBootError(
-        { code: err.code, context: err.context },
-        'vi',
-      );
-      write(`${colors.err(prefixes.err)} ${formatted.line}\n`);
-      if (formatted.hint) {
-        write(`${colors.dim(`  → ${formatted.hint}`)}\n`);
-      }
-      // Log the machine-readable form for support triage; does NOT echo secrets
-      // because NimbusError.context is structured, never a raw API key.
-      logger.warn(
-        { code: err.code, context: err.context },
-        'provider init failed',
-      );
-    } else {
-      write(`${colors.err(prefixes.err)} ${(err as Error).message}\n`);
-    }
-    state.turnAbort = null;
-    return;
-  }
-  const turnCtx: TurnContext = {
-    sessionId: session.id,
-    wsId: state.wsId,
-    channel: 'cli',
-    mode: state.mode,
-    abort,
-    provider,
-    model: state.model,
-  };
-  // SPEC-825: wire onAsk for interactive TTY (skipped in bypass mode — no prompts needed).
-  // SPEC-832: prefer host.ask() over legacy onAsk when CliUIHost is provided.
-  const onAsk = state.mode !== 'bypass'
-    ? makeOnAsk(input, output, isTTY)
-    : undefined;
-  const toolAdapter = createLoopAdapter({
-    registry: state.registry,
-    permissions: state.gate,
-    workspaceId: state.wsId,
-    sessionId: session.id,
-    cwd: process.cwd(),
-    mode: state.mode,
-    // Legacy onAsk kept as fallback for one release (deprecated, SPEC-832).
-    onAsk,
-    // SPEC-832: wire UIHost for multi-channel confirm routing.
-    host: host && state.mode !== 'bypass' ? host : undefined,
-  });
-  // SPEC-121: snapshot prior messages before the turn for rehydration
-  const priorMessages = getCachedMessages(session.id);
+    const priorMessages = getCachedMessages(session.id);
+    appendToCache(session.id, { role: 'user', content: [{ type: 'text', text: value }] });
 
-  // Append user message to cache now (loop.ts persists to JSONL separately)
-  const userMsg = { role: 'user' as const, content: [{ type: 'text' as const, text: userMessage }] };
-  appendToCache(session.id, userMsg);
-
-  let assistantTextBuf = '';
-  try {
-    for await (const out of runTurn({
-      ctx: turnCtx,
-      userMessage,
-      tools: toolAdapter,
-      priorMessages,
-    })) {
-      renderer.handle(out);
-      // Collect assistant text from streaming chunks for cache
-      if (out.kind === 'chunk' && out.chunk.type === 'content_block_delta' && out.chunk.delta.type === 'text') {
-        assistantTextBuf += out.chunk.delta.text ?? '';
-      } else if (out.kind === 'chunk' && out.chunk.type === 'content_block_stop') {
-        if (assistantTextBuf.length > 0) {
-          appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
-          assistantTextBuf = '';
+    let assistantTextBuf = '';
+    try {
+      for await (const out of runTurn({ ctx: turnCtx, userMessage: value, tools: toolAdapter, priorMessages })) {
+        if (out.kind === 'chunk' && out.chunk.type === 'content_block_delta' && out.chunk.delta.type === 'text') {
+          assistantTextBuf += out.chunk.delta.text ?? '';
+        } else if (out.kind === 'chunk' && out.chunk.type === 'content_block_stop') {
+          if (assistantTextBuf.length > 0) {
+            appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
+            assistantTextBuf = '';
+          }
         }
       }
+      if (assistantTextBuf.length > 0) {
+        appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
+      }
+    } catch (err) {
+      if (err instanceof NimbusError) {
+        logger.warn({ code: err.code, context: err.context }, 'repl turn error (ink path)');
+        const { getGlobalBus } = await import('../../core/events.ts');
+        const { TOPICS } = await import('../../core/eventTypes.ts');
+        getGlobalBus().publish(TOPICS.ui.error, { type: 'ui.error', error: err, ts: Date.now() });
+      } else {
+        logger.error({ err: (err as Error).message }, 'repl turn error (ink path)');
+      }
     }
-    if (assistantTextBuf.length > 0) {
-      appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
-    }
-  } catch (err) {
-    renderer.flush();
-    if (err instanceof NimbusError) {
-      write(`${colors.err(prefixes.err)} ${err.code}: ${JSON.stringify(err.context)}\n`);
-    } else {
-      logger.error({ err: (err as Error).message }, 'repl turn error');
-      write(`${colors.err(prefixes.err)} ${(err as Error).message}\n`);
-    }
+  }
+
+  // Mount Ink app
+  const mounted = mountReplApp({
+    workspace,
+    mode,
+    lastBootAt: bootedMeta.lastBootAt,
+    numStartups: bootedMeta.numStartups,
+    workspaceRoot: process.cwd(),
+    onSubmit: (value: string) => { void handleSubmit(value); },
+    onExit: () => { mounted.unmount(); },
+    onUIHostReady: (host: LoopUIHost) => { inkUIHost = host; },
+  });
+
+  // SIGINT / SIGTERM: unmount Ink cleanly + restore terminal (SPEC-851 §2.1)
+  const cleanupAndExit = (code: number): void => {
+    try { mounted.unmount(); } catch { /* already unmounted */ }
+    setTelegramRuntimeBridge(null);
+    unwireBus();
+    try { getChannelRuntime().dispose().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+    process.exit(code);
+  };
+
+  process.once('SIGINT', () => cleanupAndExit(130));
+  process.once('SIGTERM', () => cleanupAndExit(143));
+
+  // Await Ink exit (user pressed Ctrl-C twice or called /exit)
+  try {
+    await mounted.waitUntilExit();
   } finally {
-    state.turnAbort = null;
-    renderer.flush();
+    setTelegramRuntimeBridge(null);
+    unwireBus();
+    try { await getChannelRuntime().dispose(); } catch { /* best-effort */ }
   }
 }

@@ -1,11 +1,12 @@
 ---
 id: SPEC-851
 title: repl.ts Ink integration glue — startRepl entry point
-status: draft
+status: approved
 version: 0.1.0
 owner: "@hiepht"
 created: 2026-04-17
 updated: 2026-04-17
+implemented: 2026-04-17
 release: v0.4
 layer: channels
 depends_on: [META-011, SPEC-840, SPEC-841, SPEC-842, SPEC-848]
@@ -13,8 +14,11 @@ blocks: []
 estimated_loc: 200
 files_touched:
   - src/channels/cli/repl.ts
+  - src/channels/cli/repl.legacy.ts
   - src/channels/cli/ink/repl.tsx
+  - src/channels/cli/ink/uiHost.tsx
   - tests/channels/cli/repl.test.ts
+  - scripts/pty-smoke/ink-repl.ts
 ---
 
 # repl.ts Ink Integration Glue — startRepl Entry Point
