@@ -8,9 +8,9 @@ created: 2026-04-17
 updated: 2026-04-17
 release: v0.4
 layer: channels
-depends_on: [META-011, SPEC-840, SPEC-830]
+depends_on: [META-011, SPEC-840, SPEC-830, SPEC-844]
 blocks: []
-estimated_loc: 350
+estimated_loc: 500
 files_touched:
   - src/channels/cli/ink/components/permissions/PermissionDialog.tsx
   - src/channels/cli/ink/components/permissions/PermissionRequest.tsx
@@ -67,6 +67,9 @@ files_touched:
 - Layer rule (SPEC-833): `channels/cli/` must not import `tools/` directly; tool identity arrives as plain string from the UIHost intent event.
 - `ExitPlanModePermissionRequest` uses Ink's `useStdout` rows for sticky footer calculation; no hard-coded row offsets.
 - All components are function components; no class inheritance.
+- **Border constants (pinned)**: `PermissionDialog` shell uses `borderStyle="round" borderLeft={false} borderRight={false} borderBottom={false}` (matches Claude Code `PermissionDialog.tsx:62`).
+- **Bash command prefix safety**: `getSimpleCommandPrefix()` REJECTS any command containing `;`, `&&`, `||`, `|`, `\n`, `$(`, or backtick. When the extracted prefix is ambiguous or contains any of these sequences, the dialog MUST hide the "Always" option and force per-invocation approval. Reason: META-009 T23 rule-injection attack vector.
+- **ANSI/OSC stripping**: ExitPlanMode plan body and all `tool_result` text MUST route through the SPEC-843 ANSI-OSC stripper before render to prevent OSC injection into the terminal. Reason: META-009 T22.
 
 ### Performance
 
@@ -83,6 +86,7 @@ files_touched:
 - **`permission` color token, not hardcoded hex.** All theming flows through SPEC-840 `useTheme()` so `NO_COLOR=1` and ANSI-palette modes work without per-component branches.
 - **Sticky footer via `setStickyFooter` prop, not absolute positioning.** Ink doesn't support absolute positioning; `setStickyFooter` (Ink 7 API) is the correct pattern for pinned footer rows — matches Claude Code `ExitPlanModePermissionRequest` reference.
 - **"Yes, don't ask again" writes rule via callback prop.** Dialog component is pure UI; rule persistence belongs to the caller (UIHost). Matches functional + closures convention.
+- **Exact label text**: "Yes, and don't ask again for `<prefix>`" — word order is "ask again for X", NOT "ask for X again". Matches Claude Code `FallbackPermissionRequest.tsx:53-108`.
 - **Claude Code references**: `components/permissions/PermissionDialog.tsx:17-71`, `PermissionRequest.tsx:47-82`, `BashPermissionRequest/BashPermissionRequest.tsx:1-535`, `ExitPlanModePermissionRequest/`, `PermissionExplanation.tsx`.
 
 ## 5. Task Breakdown
@@ -134,6 +138,12 @@ export function PermissionRequest(props: PermissionDialogProps): React.ReactElem
 
 // Response resolved to UIHost (SPEC-830 contract):
 // UIResult<'allow' | 'always' | 'deny'>
+
+// Extends SPEC-830 UIIntent — new variant for permission requests:
+// | { kind: 'permission'; toolName: string; detail: string; allowAlways: boolean }
+// UIResult.value narrowed for 'permission' kind: 'allow' | 'always' | 'deny'
+// Note: 'allowAlways: false' suppresses the "Yes, and don't ask again" option
+// (used when Bash prefix is unsafe/ambiguous per META-009 T23 rule).
 ```
 
 ## 8. Files Touched
@@ -153,9 +163,10 @@ export function PermissionRequest(props: PermissionDialogProps): React.ReactElem
 
 ## 9. Open Questions
 
-- [ ] Should "Yes, don't ask again" option text include the extracted command prefix or just the tool name? (UX polish decision — defer to v0.4.1 if needed)
 - [ ] NotebookEdit — show full notebook path or just filename? (depends on typical path lengths)
+- [ ] Consider deferring SedEdit + NotebookEdit per-tool components to v0.4.1 to stay within 500 LoC budget (BashPermissionRequest alone is ~535 LoC in Claude Code; 8 variants may push past limit).
 
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-dialogs; synthesized from META-011 Phase D + Claude Code permissions reference
+- 2026-04-17 @hiepht: Phase 3 revisions — UIIntent.permission variant added (extends SPEC-830); SPEC-844 dep added; Bash prefix safety rules (META-009 T23); ANSI-OSC strip guard (META-009 T22); border constants pinned; label word order fixed; LoC budget bumped 350→500; SedEdit/Notebook deferral noted in Open Questions.

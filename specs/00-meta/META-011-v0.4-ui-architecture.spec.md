@@ -18,20 +18,13 @@ files_touched: []
 
 ## 1. Purpose
 
-Define the architecture + spec tree for v0.4 CLI UI uplift: port Claude Code's Ink/React UX onto nimbus-os CLI. Outcomes:
-
-- Visual + interaction parity with Claude Code across 30 patterns (spinner, mode badges, diff, alt-screen modals, sticky footer, narrow-breakpoints).
-- Zero v0.3.10–15 picker regressions via **single stdin owner** (`internal_eventEmitter`), never `setRawMode` torn down mid-session.
-- Tool stream renders with spinner verb rotation, cached markdown (500 LRU), colored structured diff, collapsed Read/Search.
-- 8 modal panels enter alt-screen + restore cleanly (no scrollback pollution, guarded against ink#935).
-- Narrow-terminal degrades (`<120/80/60` cols). `NO_COLOR` + reduced-motion respected.
-- Gate B 4-smoke (PTY + Telegram + vault + 3-OS) runs on Ink binary before tag.
+Architecture + spec tree for v0.4 CLI UI uplift: port Claude Code's Ink/React UX onto nimbus-os CLI. Outcomes: visual parity across 30 patterns (spinner, mode badges, diff, alt-screen, sticky footer, narrow-breakpoints); single stdin owner (`internal_eventEmitter`); 8 alt-screen modals; `NO_COLOR` + reduced-motion; Gate B 4-smoke on Ink binary before tag.
 
 ## 2. Scope
 
 ### 2.1 In-scope (v0.4)
 
-The 10 child SPECs below cover the full CLI UI uplift. Grouped into 5 phases, deliverable sequentially but reviewable in parallel:
+The 17 child SPECs below cover the full CLI UI uplift. Grouped into 5 phases, deliverable sequentially but reviewable in parallel:
 
 - **Phase A — Foundation** (blocks all others)
   - `SPEC-840` Ink 7 app bootstrap + `@inkjs/ui` wiring + theme tokens + base components (`<Pane>`, `<ThemedText>`, `<Byline>`, `<Divider>`, `<StatusIcon>`) + testing infra (`ink-testing-library`).
@@ -48,12 +41,21 @@ The 10 child SPECs below cover the full CLI UI uplift. Grouped into 5 phases, de
 - **Phase E — Status + Polish**
   - `SPEC-848` `StatusLine` (model · mode · $today · ctx%) + `PromptInputFooter` + `TaskListV2` rendering (max-display clamp, 30s recent-completed TTL, figures icons).
   - `SPEC-849` Meta-UX: narrow-breakpoints, `NO_COLOR`, reduced-motion spinner fallback, SIGWINCH re-layout, alt-screen enter/exit guards, synchronized-output (DECSET 2026) wrapper, Kitty keyboard opt-in, keybinding manager (contexts + reserved shortcuts + chord prefix).
+- **Phase F — Key + Locale + Error UI** (post-Phase E addenda)
+  - `SPEC-850` `keyPromptCore` — secure key prompt; fixes plaintext echo on fast-init.
+  - `SPEC-851` `repl.ts` Ink integration — wires Ink lifecycle; `NIMBUS_UI=legacy` guard.
+  - `META-012` UI error codes — `U_*` namespace extending META-003.
+  - `SPEC-852` inline-error-dialog — `<ErrorDialog>` surfaces `NimbusError` without crash.
+  - `SPEC-853` welcome-byline — Ink `<WelcomeByline>` replacing legacy `welcome.ts`.
+  - `SPEC-854` locale-policy — locale detection, `vi`/`en` toggle, ICU budget, `string-width`.
+  - `SPEC-855` ink-onboarding-rewrite — onboarding wizard in Ink; replaces `onboard/picker.ts`.
 
-Total estimated LoC: ~1800 net (add ~2600 new, delete ~800 in `slashAutocomplete`, `onboard/picker`, `welcome`, `mascot`, dead `idleHeartbeat`, `diffAndWrite` graveyard).
+Total estimated LoC: ~2700 net (add ~3500 new, delete ~800 in `slashAutocomplete`, `onboard/picker`, `welcome`, `mascot`, dead `idleHeartbeat`, `diffAndWrite` graveyard).
 
 ### 2.2 Out-of-scope (v0.4 — defer or skip)
 
 - Mouse selection + hit-testing — Claude Code's fork ships ~800 LoC (`hit-test.ts`, `selection.ts`). Skip.
+- `onboard/picker.ts` is NOT deleted in v0.4. It is used by shipped SPEC-827, SPEC-832, SPEC-901 and cannot be removed until the full onboarding rewrite (SPEC-855) lands and Gate B smokes pass. Deletion deferred to v0.5.
 - Kitty keyboard protocol + modifyOtherKeys — opt-in via `SPEC-849` only if terminal advertises support.
 - iTerm2 progress OSC + tab status — nice-to-have, defer to v0.5.
 - OSC clipboard writer (`setClipboard`) — defer to v0.5.
@@ -66,12 +68,8 @@ Total estimated LoC: ~1800 net (add ~2600 new, delete ~800 in `slashAutocomplete
 
 ### 3.1 Technical
 
-- Runtime: Bun ≥1.3.5 (native Terminal API via `Bun.spawn({terminal})` for PTY smokes).
-- Node engines: `>=22` (Ink 7 hard floor). Bun satisfies.
-- React ≥19.2 peer of Ink 7. No concurrent-mode workarounds beyond what Ink supports.
-- TypeScript strict, no `any`. Max 400 LoC per file.
-- `SPEC-833` layer enforcement must NOT regress. `channels/cli/` cannot import `tools/` directly; tool events arrive via event bus + `ChannelService` port.
-- Functional + closures, no class inheritance. React components = function components only.
+- Bun ≥1.3.5, Node engines ≥22 (Ink 7 floor), React ≥19.2. TypeScript strict, no `any`. Max 400 LoC per file.
+- SPEC-833 layer rule: `channels/cli/` cannot import `tools/` directly. Function components only; no class inheritance.
 
 ### 3.2 Performance
 
@@ -79,6 +77,22 @@ Total estimated LoC: ~1800 net (add ~2600 new, delete ~800 in `slashAutocomplete
 - Streaming frame rate: match rate of incoming deltas, no artificial buffering; sync-output (DECSET 2026) wrapper to batch per-animation-frame redraws.
 - Markdown cache hit ≥90% for repeat renders of same assistant message.
 - Memory overhead: Ink runtime adds ≤8 MB RSS over current `readline` path.
+
+#### Numeric constants (pinned)
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `MAX_STATIC_BLOCKS` | `500` | Max retained blocks in Ink `<Static>`; LRU-evict older entries |
+| `FRAME_INTERVAL_MS` | `80` | Spinner animation interval (normal motion) |
+| `REDUCED_MOTION_CYCLE_MS` | `2000` | Spinner cycle period when `prefersReducedMotion` |
+| `STALL_THRESHOLD_MS` | `3000` | Duration before spinner turns red (stall indicator) |
+| `STATUS_DEBOUNCE_MS` | `300` | StatusLine re-render debounce |
+| `LARGE_PASTE_THRESHOLD_BYTES` | `10_000` | Paste above this size triggers chunked input handling |
+| `FILE_REF_SCAN_TIMEOUT_MS` | `200` | Max time for `@`-file reference scan before fallback |
+
+Additional perf budgets:
+- Yoga re-flow ≤16ms at 200×60 terminal (full-width layout pass).
+- Binary size cap ≤115MB after Ink + Yoga WASM bundled into compiled binary.
 
 ### 3.3 Resource / business
 
@@ -92,31 +106,41 @@ Total estimated LoC: ~1800 net (add ~2600 new, delete ~800 in `slashAutocomplete
 
 ## 4. Prior Decisions
 
-- **Stock `ink@7` + `@inkjs/ui@2`, NOT Claude Code's fork.** Fork is 20k LoC (mouse/search/Kitty/iTerm2) we defer. Stock Ink 7 actively maintained (Apr 2026). `@inkjs/ui` ships Spinner/Progress/TextInput/Password/Select/MultiSelect/Confirm/Alert/Badge — replaces 6+ legacy pkgs. ~55 transitive deps, 8–12 MB install (Yoga WASM bundled into compiled binary).
-- **Framework solves stdin-ownership structurally.** Previous v0.3.18 "Ink wouldn't solve it" claim refuted by Claude Code's `ink.tsx:internal_eventEmitter`: raw mode stays on across subtree transitions; React routes subscription. Drain + 80ms priming in `onboard/picker.ts` deleted.
-- **Custom multi-line input** — `@inkjs/ui TextInput` is single-line; ink#660 #676 open. Build on `usePaste` (ink#921) + `string-width` (Vietnamese IME, tracking ink#759).
-- **Custom streaming markdown** — `ink-markdown` unmaintained ~2yr, doesn't tolerate partial blocks. Wrap `marked` streaming mode (~300 LoC); commit finished blocks to `<Static>`.
-- **Custom alt-screen + sync-output wrapper** — ink#935 (scrollback wipe) open; defensive entry/exit guard. DECSET 2026 sync-output for tmux (claude-code#37283).
-- **PTY smoke uses `Bun.spawn({terminal})`** (Bun 1.3.5+). NOT `node-pty` (broken per bun#7362). `@lydell/node-pty` reserved for Node CI fallback.
-- **Pin deps exact**. `ink` + `@inkjs/ui` + `react`. `@inkjs/ui` 2-yr-stale release is risk — vendor widgets into `src/channels/cli/widgets/` if it rots before v1.0.
-- **Legacy raw path behind `NIMBUS_UI=legacy`** for v0.4.0 only. Removed in v0.4.1 after 1 release of field validation.
+- **Stock `ink@7` + `@inkjs/ui@2`, NOT Claude Code's fork.** Fork is 20k LoC (mouse/search/Kitty/iTerm2) deferred. `@inkjs/ui` replaces 6+ legacy pkgs; ~55 deps, 8–12 MB install (Yoga WASM in binary).
+- **Framework solves stdin-ownership structurally.** `ink.tsx:internal_eventEmitter` keeps raw mode on across subtree transitions. Drain + 80ms priming in `onboard/picker.ts` deleted.
+- **Custom multi-line input** — `@inkjs/ui TextInput` single-line (ink#660/676); build on `usePaste` (ink#921) + `string-width` (Vietnamese IME, ink#759).
+- **Custom streaming markdown** — `ink-markdown` unmaintained; wrap `marked` streaming mode (~300 LoC), commit finished blocks to `<Static>`.
+- **Custom alt-screen + sync-output wrapper** — ink#935 (scrollback wipe) open; DECSET 2026 for tmux (claude-code#37283).
+- **PTY smoke** via `Bun.spawn({terminal})` (Bun 1.3.5+). NOT `node-pty` (bun#7362). `@lydell/node-pty` for Node CI fallback.
+- **Pin deps exact.** Vendor `@inkjs/ui` widgets into `src/channels/cli/widgets/` if release rots before v1.0.
+- **Legacy raw path behind `NIMBUS_UI=legacy`** for v0.4.0 only; removed in v0.4.1.
+- **Hash function on render path: `Bun.hash` (wyhash).** Node fallback: non-crypto djb2. `sha256` forbidden on hot paths (exceeds 16ms Yoga budget at 200×60).
 
 ## 5. Task Breakdown
 
 | ID | SPEC | Acceptance | Est LoC | Depends |
 |----|------|------------|---------|---------|
-| T1 | SPEC-840 Foundation | Ink app mounts, ThemeProvider renders, `bun test` + ink-testing-library green | 450 | — |
-| T2 | SPEC-841 PromptInput | Multi-line, paste preserves, mode prefixes detected, draft survives Ctrl-C, password mode masks | 500 | T1 |
-| T3 | SPEC-842 Slash autocomplete + /help | Dropdown renders, Tab accepts, Esc dismisses, /help shows categories + keybinding legend | 300 | T1 |
-| T4 | SPEC-843 Streaming output | Spinner frames match Claude Code, markdown cache ≥90% hit, tool-use/result blocks render | 400 | T1 |
-| T5 | SPEC-844 StructuredDiff | +/- colored, narrow-fallback collapses, cached per hunk | 200 | T1 |
-| T6 | SPEC-845 Collapsed Read/Search | Back-to-back Read+Grep coalesce into 1 line, progress bars for background tasks | 150 | T4 |
-| T7 | SPEC-846 PermissionDialog | 8 per-tool requests render, sticky footer for plan, Yes/Always/No cycle correct | 350 | T1 |
-| T8 | SPEC-847 Modal panels | 8 alt-screen modals enter+restore, guarded against scrollback wipe | 350 | T1 |
-| T9 | SPEC-848 StatusLine + footer + TaskListV2 | Status row shows model/mode/$today/ctx%, TaskList clamps to rows, recent-completed TTL | 300 | T1 |
-| T10 | SPEC-849 Meta-UX + keybinding manager | NO_COLOR, reduced-motion, SIGWINCH, sync-output wrapper, keybinding contexts all pass unit tests | 250 | T1 |
+| ID | SPEC | Est LoC | Depends |
+|----|------|---------|---------|
+| T1 | SPEC-840 Foundation | 450 | — |
+| T2 | SPEC-841 PromptInput | 500 | T1 |
+| T3 | SPEC-842 Slash autocomplete + /help | 300 | T1 |
+| T4 | SPEC-843 Streaming output | 400 | T1 |
+| T5 | SPEC-844 StructuredDiff | 200 | T1 |
+| T6 | SPEC-845 Collapsed Read/Search | 150 | T4 |
+| T7 | SPEC-846 PermissionDialog | 500 | T1 |
+| T8 | SPEC-847 Modal panels | 350 | T1 |
+| T9 | SPEC-848 StatusLine + footer + TaskListV2 | 300 | T1 |
+| T10 | SPEC-849 Meta-UX + keybinding manager | 250 | T1 |
+| T11 | SPEC-850 keyPromptCore | 80 | T1 |
+| T12 | SPEC-851 repl.ts Ink integration | 120 | T1, T2 |
+| T13 | META-012 UI error codes | 50 | — |
+| T14 | SPEC-852 inline-error-dialog | 100 | T1, T13 |
+| T15 | SPEC-853 welcome-byline | 80 | T1 |
+| T16 | SPEC-854 locale-policy | 120 | T1 |
+| T17 | SPEC-855 ink-onboarding-rewrite | 350 | T1, T2, T11 |
 
-Total ~3250 LoC new. After deleting drain/priming/dead code (~800 LoC), net ~+2450.
+Total ~4150 LoC new. After deleting ~800 LoC (drain/priming/dead code), net ~+2700.
 
 ## 6. Verification
 
@@ -125,15 +149,10 @@ Each child SPEC defines its own unit tests with `ink-testing-library`. Run via `
 
 ### 6.2 Gate B 4-smoke (mandatory before tag)
 
-1. **PTY REPL smoke** — `Bun.spawn({terminal:{cols:80,rows:24}})` spawns the compiled binary, drives:
-   - Vietnamese multi-byte paste (`chào anh em`) + Enter
-   - Slash command cycle (`/help` → Esc → `/model` → picker → Esc)
-   - Tool confirm flow (mock a Write tool → Yes → ensure allowed)
-   - `/clear` + Ctrl-L both redraw cleanly
-   - Resize 80→60→120 cols, assert re-layout
+1. **PTY REPL smoke** — `Bun.spawn({terminal:{cols:80,rows:24}})`: Vietnamese paste, slash-command cycle, tool-confirm flow, `/clear`, resize 80→60→120.
 2. **Real Telegram smoke** — unchanged from v0.3.18 protocol.
 3. **Vault upgrade smoke** — unchanged.
-4. **3-OS binary smoke via CD** — Ink binary runs on ubuntu-22.04, macos-14, windows-2022; `--version` + `--help` non-TTY pass.
+4. **3-OS binary smoke via CD** — ubuntu-22.04, macos-14, windows-2022; `--version` + `--help` non-TTY pass.
 
 ### 6.3 Performance budgets
 
@@ -184,3 +203,4 @@ See child SPECs. This umbrella alters no source files directly.
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by team-lead (Opus synthesis of 3 Opus research reports: Claude Code UI catalog + nimbus gap audit + Ink ecosystem inventory).
+- 2026-04-17 @hiepht: Phase 3 revisions — +7 new SPECs (SPEC-850–855, META-012) from reviewer gaps; perf constants pinned; onboard/picker delete deferred to v0.5; hash function policy added (Bun.hash/djb2, no sha256 on hot paths).

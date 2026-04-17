@@ -8,7 +8,7 @@ created: 2026-04-17
 updated: 2026-04-17
 release: v0.4
 layer: channels
-depends_on: [META-009, META-011, SPEC-840]
+depends_on: [META-009, META-011, META-012, SPEC-840]
 blocks: []
 estimated_loc: 250
 files_touched:
@@ -29,7 +29,7 @@ files_touched:
 - `useBreakpoints()` hook returns `{isNarrow, isTight, isCompact}` based on terminal cols (`<120`, `<80`, `<60`); all layout-sensitive components consume it to degrade gracefully.
 - `NO_COLOR=1` → `chalk.level = 0` at app init; `prefersReducedMotion` from env → spinner falls back to a 2s dim `●` cycle instead of animated frames.
 - `<AltScreen>` wrapper enters DEC 1049 cleanly and restores main screen on SIGINT mid-modal with no garbled terminal (ink#935 guard).
-- Keybinding manager resolves context stacks: deeper context wins; chord prefix timeout 1.5s; reserved shortcuts (ctrl+c, ctrl+d) cannot be rebound; user overrides loaded from `~/.nimbus/keybindings.json`.
+- Keybinding manager resolves context stacks: deeper context wins; chord prefix timeout 1.5s; reserved shortcuts (ctrl+c, ctrl+d) cannot be rebound; user overrides loaded from `~/.nimbus/keybindings.json`; all config values Zod-validated against `KeybindingAction` union at load time; invalid config → pino warn + fall back to defaults.
 
 ## 2. Scope
 
@@ -59,8 +59,9 @@ files_touched:
 - `useInsertionEffect` for alt-screen entry (race-free; Claude Code `AlternateScreen.tsx`).
 - Alt-screen exit MUST NOT emit `CSI 3 J` during active Ink render (ink#935 scrollback wipe).
 - DECSET 2026 is tmux-only; skip when `$TERM` is not `screen*`/`tmux*`.
-- Reserved ctrl+c, ctrl+d: `reservedShortcuts.ts` throws `NimbusError(ErrorCode.P_OPERATION_DENIED)` on override attempt.
-- `keybindings.json` Zod-validated; unknown context keys → pino warning, not error.
+- Reserved ctrl+c, ctrl+d: `reservedShortcuts.ts` throws `NimbusError(ErrorCode.P_OPERATION_DENIED)` on override attempt (code defined in META-012 `U_UI_CANCELLED`; `P_KEYBIND_RESERVED` also defined in META-012).
+- `keybindings.json` Zod-validated against `KeybindingAction` typed union; unknown action strings → `logger.warn` + skip (NEVER dispatch as shell/eval/tool); unknown context keys → pino warning, not error.
+- **Chord prefix policy**: single-modifier bindings (`ctrl+<letter>`) are NEVER chord prefixes. Chord prefixes REQUIRE a leader key (`ctrl+g` or `\` backslash). This preserves readline/emacs conventions — ctrl+a, ctrl+e, ctrl+r, ctrl+w, ctrl+k, ctrl+u behave as immediate actions and are unaffected by chord timeout.
 - Max 400 LoC per file. No `any`. TypeScript strict. Layer rule (SPEC-833).
 
 ### Security (META-009)
@@ -87,9 +88,9 @@ files_touched:
 | ID | Task | Acceptance | Est LoC | Deps |
 |----|------|------------|---------|------|
 | T1 | `breakpoints.ts` — `useBreakpoints()` hook | Returns correct booleans at cols 59/79/119/121; updates on resize event | 40 | SPEC-840 |
-| T2 | `altScreen.tsx` — `<AltScreen>` with SIGINT guard | Enters + exits DEC 1049; SIGINT mid-render restores main screen; no `CSI 3 J` race | 80 | SPEC-840 |
+| T2 | `altScreen.tsx` — `<AltScreen>` with SIGINT guard | Enters + exits DEC 1049; SIGINT mid-render restores main screen; no `CSI 3 J` race; entry side-effect in `try/finally` so DEC 1049 exit + cursor restore fire even if subtree mount throws; DECSET 2026 sync-output wrapper emits 2026-reset on crash via `process.on('exit')` + SIGINT handler | 80 | SPEC-840 |
 | T3 | `syncOutput.ts` — DECSET 2026 wrapper | Emits only when `$TERM` is tmux/screen; no-op otherwise | 30 | — |
-| T4 | `keybindings/` — manager + defaults + resolver + reserved | `resolve()` returns deeper-context binding; chord 1.5s timeout fires; ctrl+c block asserted | 150 | — |
+| T4 | `keybindings/` — manager + defaults + resolver + reserved | `resolve()` returns deeper-context binding; chord 1.5s timeout fires; ctrl+c block asserted; Ctrl-C double-press: first press clears input buffer + shows "Press Ctrl-C again to exit"; second press within 1.5s exits REPL; binding type = `DoublePress`, unreboundable | 150 | — |
 | T5 | `meta-ux.test.ts` — full suite | All breakpoint, NO_COLOR, reducedMotion, altScreen, keybinding tests green | 200 | T1, T2, T3, T4 |
 
 ## 6. Verification
@@ -125,9 +126,20 @@ export type KeybindingContext =
   | 'Global' | 'Chat' | 'Autocomplete' | 'Select'
   | 'Confirmation' | 'Scroll' | 'HistorySearch' | 'Transcript' | 'Help';
 
+export type KeybindingAction =
+  | 'app:interrupt' | 'app:exit' | 'app:redraw' | 'app:toggleHelp'
+  | 'chat:submit' | 'chat:cancel' | 'chat:cycleMode' | 'chat:historyPrev' | 'chat:historyNext'
+  | 'autocomplete:accept' | 'autocomplete:dismiss' | 'autocomplete:next' | 'autocomplete:prev'
+  | 'select:accept' | 'select:cancel' | 'select:next' | 'select:prev'
+  | 'confirmation:yes' | 'confirmation:no' | 'confirmation:toggleExplanation' | 'confirmation:cycleMode'
+  | 'scroll:pageUp' | 'scroll:pageDown' | 'scroll:home' | 'scroll:end'
+  | 'modal:openHelp' | 'modal:openModel' | 'modal:openCost' | 'modal:openMemory' | 'modal:openDoctor' | 'modal:openStatus'
+  | 'history:search';
+// Unknown action string at runtime → logger.warn + skip. NEVER dispatch as shell/eval/tool.
+
 export interface KeybindingManager {
-  register(context: KeybindingContext, key: string, action: string): void;
-  resolve(contextStack: KeybindingContext[], key: string): string | undefined;
+  register(context: KeybindingContext, key: string, action: KeybindingAction): void;
+  resolve(contextStack: KeybindingContext[], key: string): KeybindingAction | undefined;
   loadUserOverrides(path: string): Promise<void>;
 }
 export function createKeybindingManager(): KeybindingManager
@@ -152,3 +164,4 @@ export function createKeybindingManager(): KeybindingManager
 ## 10. Changelog
 
 - 2026-04-17 @hiepht: draft created by spec-writer-foundation; synthesized from META-011 + Claude Code AlternateScreen + defaultBindings research
+- 2026-04-17 @hiepht: Phase 3 revisions — META-012 dep added; ErrorCode refs reference META-012 (U_UI_CANCELLED, P_KEYBIND_RESERVED); AltScreen try/finally mount-throw safety + DECSET 2026 crash reset; KeybindingAction typed union replacing `action: string`; chord-prefix policy pinned (leader key only); Ctrl-C double-press DoublePress type added; keybindings.json Zod validation against KeybindingAction union.
