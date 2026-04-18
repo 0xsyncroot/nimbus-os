@@ -120,18 +120,23 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
     defaultModel: loaded.meta.defaultModel,
   };
 
+  // v0.4.0.2: unified derivation — match getProvider() logic below so pre-flight
+  // queries the same providerId that runtime actually uses (fixes namespace split
+  // where workspace.json had defaultProvider='openai-compat' kind but vault stored
+  // under concrete 'openai' endpoint).
+  const resolvedProviderId: string =
+    loaded.meta.defaultProvider === 'anthropic' ? 'anthropic' :
+    loaded.meta.defaultEndpoint === 'custom' || !loaded.meta.defaultEndpoint ? 'openai' :
+    loaded.meta.defaultEndpoint;
+
   // ── Pre-flight key hint (Bug 5) ───────────────────────────────────────────
-  // If defaultProvider has no resolvable key, show a friendly single-line hint
-  // in the Welcome area before the user's first submit (avoids fatal ErrorDialog).
+  // If resolved provider has no key, show a friendly single-line hint.
   let preflightKeyHint: string | undefined;
   try {
     const { resolveProviderKey } = await import('../../providers/registry.ts');
-    await resolveProviderKey({
-      providerId: loaded.meta.defaultProvider,
-      wsId: loaded.meta.id,
-    });
+    await resolveProviderKey({ providerId: resolvedProviderId, wsId: loaded.meta.id });
   } catch {
-    preflightKeyHint = `No API key set for "${loaded.meta.defaultProvider}". Run \`/key set\` to add one.`;
+    preflightKeyHint = `No API key set for "${resolvedProviderId}". Run \`/key set\` to add one.`;
   }
 
   // ── Shared UIHost slot — set after Ink mounts ──────────────────────────────
@@ -147,9 +152,7 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
   async function getProvider(): Promise<import('../../ir/types.ts').Provider> {
     if (providerCache) return providerCache;
     const { createProviderFromConfig } = await import('../../providers/registry.ts');
-    const providerId = loaded.meta.defaultProvider === 'anthropic' ? 'anthropic' :
-      loaded.meta.defaultEndpoint === 'custom' || !loaded.meta.defaultEndpoint ? 'openai' :
-      loaded.meta.defaultEndpoint;
+    const providerId = resolvedProviderId;
     const { createKeyManager } = await import('../../key/manager.ts');
     const km = createKeyManager();
     let storedBaseUrl: string | undefined;
@@ -242,29 +245,47 @@ async function startReplInk(opts: ReplOptions = {}): Promise<void> {
     const priorMessages = getCachedMessages(session.id);
     appendToCache(session.id, { role: 'user', content: [{ type: 'text', text: value }] });
 
+    // v0.4.0.2 P0 fix: publish UI stream events so <AssistantMessage> renders output.
+    const { getGlobalBus } = await import('../../core/events.ts');
+    const { TOPICS } = await import('../../core/eventTypes.ts');
+    const bus = getGlobalBus();
+    const turnId = session.id + ':' + Date.now().toString(36);
+    bus.publish(TOPICS.ui.turnStart, { type: 'ui.turnStart', turnId, ts: Date.now() });
+
     let assistantTextBuf = '';
+    let blockId = turnId + ':0';
+    let blockIdx = 0;
     try {
       for await (const out of runTurn({ ctx: turnCtx, userMessage: value, tools: toolAdapter, priorMessages })) {
         if (out.kind === 'chunk' && out.chunk.type === 'content_block_delta' && out.chunk.delta.type === 'text') {
-          assistantTextBuf += out.chunk.delta.text ?? '';
+          const text = out.chunk.delta.text ?? '';
+          assistantTextBuf += text;
+          if (text.length > 0) {
+            bus.publish(TOPICS.ui.assistantDelta, { type: 'ui.assistantDelta', turnId, blockId, text, ts: Date.now() });
+          }
         } else if (out.kind === 'chunk' && out.chunk.type === 'content_block_stop') {
           if (assistantTextBuf.length > 0) {
+            bus.publish(TOPICS.ui.assistantComplete, { type: 'ui.assistantComplete', turnId, blockId, text: assistantTextBuf, ts: Date.now() });
             appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
             assistantTextBuf = '';
+            blockIdx += 1;
+            blockId = turnId + ':' + blockIdx.toString();
           }
         }
       }
       if (assistantTextBuf.length > 0) {
+        bus.publish(TOPICS.ui.assistantComplete, { type: 'ui.assistantComplete', turnId, blockId, text: assistantTextBuf, ts: Date.now() });
         appendToCache(session.id, { role: 'assistant', content: [{ type: 'text', text: assistantTextBuf }] });
       }
+      bus.publish(TOPICS.ui.turnComplete, { type: 'ui.turnComplete', turnId, outcome: 'success', ts: Date.now() });
     } catch (err) {
       if (err instanceof NimbusError) {
         logger.warn({ code: err.code, context: err.context }, 'repl turn error (ink path)');
-        const { getGlobalBus } = await import('../../core/events.ts');
-        const { TOPICS } = await import('../../core/eventTypes.ts');
-        getGlobalBus().publish(TOPICS.ui.error, { type: 'ui.error', error: err, ts: Date.now() });
+        bus.publish(TOPICS.ui.error, { type: 'ui.error', error: err, ts: Date.now() });
+        bus.publish(TOPICS.ui.turnComplete, { type: 'ui.turnComplete', turnId, outcome: 'error', errorCode: err.code, ts: Date.now() });
       } else {
         logger.error({ err: (err as Error).message }, 'repl turn error (ink path)');
+        bus.publish(TOPICS.ui.turnComplete, { type: 'ui.turnComplete', turnId, outcome: 'error', ts: Date.now() });
       }
     }
   }

@@ -17,6 +17,9 @@ import { SlashAutocomplete } from './components/SlashAutocomplete.tsx';
 import { FileRefAutocomplete } from './components/FileRefAutocomplete.tsx';
 import { TaskListV2 } from './components/TaskListV2.tsx';
 import { ErrorDialog } from './components/ErrorDialog.tsx';
+import { AssistantMessage } from './components/AssistantMessage.tsx';
+import type { AssistantTextBlock } from './components/AssistantMessage.tsx';
+import { useAssistantStream } from './hooks/useAssistantStream.ts';
 import { useAppContext } from './app.tsx';
 import { getGlobalBus } from '../../../core/events.ts';
 import { TOPICS } from '../../../core/eventTypes.ts';
@@ -70,6 +73,14 @@ function InkReplInner({
   // ── Slash autocomplete visibility ─────────────────────────────────────────
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [fileRefQuery, setFileRefQuery] = useState<string | null>(null);
+
+  // ── Assistant stream (v0.4.0.2 P0 fix) ────────────────────────────────────
+  const { blocks: streamBlocks, isStreaming } = useAssistantStream();
+  const assistantBlocks: AssistantTextBlock[] = streamBlocks.map((b) => ({
+    id: b.id,
+    text: b.text,
+    isComplete: b.complete,
+  }));
 
   // ── ui.error bus subscription ─────────────────────────────────────────────
   const [uiErrors, setUiErrors] = useState<NimbusError[]>([]);
@@ -131,6 +142,11 @@ function InkReplInner({
       {/* Status line */}
       <StatusLine costToday={0} ctxPercent={0} />
 
+      {/* Assistant stream output (v0.4.0.2 fix) */}
+      {assistantBlocks.length > 0 && (
+        <AssistantMessage blocks={assistantBlocks} isComplete={!isStreaming} />
+      )}
+
       {/* Inline error dialogs */}
       {errorBlocks.length > 0 && (
         <Box flexDirection="column">
@@ -163,7 +179,7 @@ function InkReplInner({
         />
       )}
 
-      {/* Prompt input */}
+      {/* Prompt input (v0.4.0.2: footer moved INSIDE the rounded border) */}
       <PromptInput
         placeholder="Ask anything… (/help for commands)"
         onSubmit={(value: string, _inputMode) => {
@@ -180,14 +196,14 @@ function InkReplInner({
         }}
         onCancel={onExit}
         onModeChange={handleModeChange}
-      />
-
-      {/* Footer row */}
-      <PromptInputFooter
-        mode={mode}
-        isNarrow={isNarrow}
-        isShort={isShort}
-        notificationCount={0}
+        footer={
+          <PromptInputFooter
+            mode={mode}
+            isNarrow={isNarrow}
+            isShort={isShort}
+            notificationCount={0}
+          />
+        }
       />
 
       {/* Task list */}

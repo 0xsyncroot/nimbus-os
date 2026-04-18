@@ -46,6 +46,10 @@ export const TOPICS = Object.freeze({
   },
   ui: {
     error: 'ui.error',
+    assistantDelta: 'ui.assistantDelta',
+    assistantComplete: 'ui.assistantComplete',
+    turnStart: 'ui.turnStart',
+    turnComplete: 'ui.turnComplete',
   },
 } as const);
 
@@ -135,6 +139,34 @@ export type UiErrorEvent = {
   ts: number;
 };
 
+/** v0.4.0.2 streaming wire: published by repl.ts handleSubmit, consumed by Ink <AssistantMessage>. */
+export type UiAssistantDeltaEvent = {
+  type: 'ui.assistantDelta';
+  turnId: string;
+  blockId: string;
+  text: string;
+  ts: number;
+};
+export type UiAssistantCompleteEvent = {
+  type: 'ui.assistantComplete';
+  turnId: string;
+  blockId: string;
+  text: string;
+  ts: number;
+};
+export type UiTurnStartEvent = {
+  type: 'ui.turnStart';
+  turnId: string;
+  ts: number;
+};
+export type UiTurnCompleteEvent = {
+  type: 'ui.turnComplete';
+  turnId: string;
+  outcome: 'success' | 'error';
+  errorCode?: string;
+  ts: number;
+};
+
 /** SPEC-133: plan mode events — emitted by ExitPlanMode tool. */
 export type PlanProposedEvent = {
   type: 'plan.proposed';
@@ -178,6 +210,10 @@ const REGISTERED: ReadonlySet<string> = new Set<string>([
   TOPICS.plan.decision,
   TOPICS.tools.todoUpdate,
   TOPICS.ui.error,
+  TOPICS.ui.assistantDelta,
+  TOPICS.ui.assistantComplete,
+  TOPICS.ui.turnStart,
+  TOPICS.ui.turnComplete,
 ]);
 
 export function isRegisteredTopic(topic: string): boolean {

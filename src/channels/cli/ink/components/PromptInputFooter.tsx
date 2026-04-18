@@ -76,10 +76,7 @@ export function PromptInputFooter({
 
   return (
     <Box flexDirection="row" gap={1}>
-      {/* Connector glyph — visually ties this row to the PromptInput box above */}
-      <Text color={subtleColorProp}>{'╰'}</Text>
-
-      {/* Mode badge */}
+      {/* Mode badge (v0.4.0.2: removed faux connector ╰ — footer now lives inside PromptInput border). */}
       <Text color={modeColorProp} bold>
         {mode}
       </Text>

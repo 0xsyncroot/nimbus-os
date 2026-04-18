@@ -26,6 +26,8 @@ export interface PromptInputProps {
   onModeChange?: (mode: InputMode) => void;
   onStash?: (draft: string) => void;
   multiLine?: boolean;
+  /** Optional footer rendered INSIDE the rounded border box (v0.4.0.2 — replaces faux ╰ connector). */
+  footer?: React.ReactNode;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -52,6 +54,7 @@ export function PromptInput({
   onModeChange,
   onStash,
   multiLine = true,
+  footer,
 }: PromptInputProps): React.ReactElement {
   const buf = useInputBuffer();
   const hist = useHistory();
@@ -315,7 +318,7 @@ export function PromptInput({
 
   return (
     <Box flexDirection="column">
-      <Box borderStyle="round" borderColor="gray" paddingX={1}>
+      <Box borderStyle="round" borderColor="gray" paddingX={1} flexDirection="column">
         <Box flexDirection="row">
           <Text dimColor>{'> '}</Text>
           <Box flexDirection="column">
@@ -326,6 +329,11 @@ export function PromptInput({
             )}
           </Box>
         </Box>
+        {footer != null && (
+          <Box flexDirection="row" marginTop={0}>
+            {footer}
+          </Box>
+        )}
       </Box>
       {showCtrlCHint && (
         <Text dimColor>Press Ctrl-C again to exit</Text>

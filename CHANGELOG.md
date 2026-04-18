@@ -4,6 +4,38 @@ All notable changes to nimbus-os. Format inspired by [Keep a Changelog](https://
 
 ## [Unreleased]
 
+## [0.4.0.2-alpha] — 2026-04-17 — HOTFIX (P0 chat wiring + P1 namespace + P2 footer glyph)
+
+### Fixed — P0 Ink REPL chat unresponsive
+
+User test on v0.4.0.1 revealed the Ink REPL ran the agent loop but **never rendered assistant output**. `src/channels/cli/repl.ts` handleSubmit consumed deltas and only called `appendToCache(text)` — no event bus publish, no UI mount. `<AssistantMessage>` component (SPEC-843) was built but **orphaned in the composition root** — never imported by `src/channels/cli/ink/repl.tsx`. Legacy path had `renderer.handle(out)`; Ink path dropped that wiring entirely.
+
+- **Fix**:
+  - Added 4 event topics: `ui.assistantDelta`, `ui.assistantComplete`, `ui.turnStart`, `ui.turnComplete` in `src/core/eventTypes.ts`.
+  - `repl.ts` handleSubmit now publishes delta events as chunks arrive, complete events on block_stop, turnStart before, turnComplete after (success OR error branch).
+  - New `src/channels/cli/ink/hooks/useAssistantStream.ts` subscribes to the 4 topics, accumulates `AssistantBlock[]` state.
+  - `InkReplInner` in `repl.tsx` calls `useAssistantStream()`, mounts `<AssistantMessage blocks={...} isComplete={!isStreaming} />` between StatusLine and PromptInput.
+
+### Fixed — P1 provider namespace mismatch (cosmetic)
+
+v0.4 auto-init wrote `workspace.json.defaultProvider: 'openai-compat'` (the kind) while vault stored key under `provider: 'openai'` (concrete). Pre-flight resolver queried by kind → missed; runtime getProvider derived correctly from `defaultEndpoint` → found key. Result: bogus "No API key set for openai-compat" hint even though chat worked.
+
+- **Fix**: unified derivation via `resolvedProviderId` computed once from `defaultProvider==='anthropic' ? 'anthropic' : defaultEndpoint ?? 'openai'`. Used at both pre-flight and getProvider. No workspace migration needed — runtime logic unchanged, only hint namespace corrected.
+
+### Fixed — P2 Orphan `╰ default ●` footer glyph
+
+`<PromptInput>` rendered self-closed rounded-border Box. `<PromptInputFooter>` mounted as sibling below with faux-connector `╰` on its own row → visual disconnect. Ink's round border already draws `╰─╯` at bottom; the extra `╰` below looked like a broken tree.
+
+- **Fix**:
+  - `<PromptInput>` now accepts `footer?: React.ReactNode` prop; renders it INSIDE the rounded Box as a second row.
+  - `<PromptInputFooter>` removed the faux `╰` glyph; renders just `{mode} ●` + notification count.
+  - `repl.tsx` passes footer as prop instead of mounting as sibling.
+
+### Not fixed in v0.4.0.2
+
+- 12 macOS AltScreen + userOverrides tests still skipped (TODO v0.4.0.3 — migrate to Writable.pipe mock pattern).
+- PTY smoke test for Ink REPL chat response: deferred — requires mock provider infrastructure. Manual QA step: run `/root/.nimbus/bin/nimbus`, type "hi" after key set, expect visible streaming response.
+
 ## [0.4.0.1-alpha] — 2026-04-17 — HOTFIX (P0 vault clobber + UI layout)
 
 ### Fixed — P0 vault clobber (HARD RULE §10 violation)

@@ -270,7 +270,7 @@ async function main(): Promise<number> {
         await writeInstalledVersion(current);
       }
 
-      // NOTE: boot-time diagnoseVault block removed in v0.4.0.1-alpha (HARD RULE §10).
+      // NOTE: boot-time diagnoseVault block removed in v0.4.0.2-alpha (HARD RULE §10).
       // autoProvisionPassphrase() in startReplInk already surfaces X_CRED_ACCESS/vault_locked
       // cleanly without writing any files. Diagnose is user-initiated via `nimbus debug vault status`.
 
